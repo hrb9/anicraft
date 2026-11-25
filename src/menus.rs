@@ -21,8 +21,10 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
     let mut tops = Vec::with_capacity(TOP_MENUS.len());
     // Every title in the bar and where it is, for opening on hover (#455).
     let mut titles: Vec<(egui::Id, egui::Rect)> = Vec::with_capacity(TOP_MENUS.len() + 1);
+    let mut row_rtl = false;
     egui::MenuBar::new().ui(ui, |ui| {
         ui.with_layout(crate::theme::row_layout(), |ui| {
+            row_rtl = ui.layout().main_dir() == egui::Direction::RightToLeft;
             // Keep platform-specific spacing here if the menu row ever shares the title bar again.
             ui.add_space(platform::menu_inset());
             if platform::OS == Os::Mac {
@@ -69,7 +71,7 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     app.menu_keys.hover(&ctx, &titles);
-    app.menu_keys.after(&ctx, tops);
+    app.menu_keys.after(&ctx, tops, row_rtl);
 }
 
 /// The top menus' titles in the interface language.
@@ -125,6 +127,8 @@ pub struct MenuKeys {
     stack: Vec<(egui::Id, egui::LayerId)>,
     /// Underline the access keys.
     pub show_keys: bool,
+    /// Whether the top menu row was laid out right-to-left on the previous pass.
+    rtl: bool,
 }
 
 enum At {
@@ -192,8 +196,10 @@ impl MenuKeys {
         v.into_iter().map(|(_, _, id)| id).collect()
     }
 
-    fn step(&self, i: usize, forward: bool) -> usize {
+    /// Step one menu title in visual horizontal order (`visual_right = true` moves right).
+    fn step(&self, i: usize, visual_right: bool) -> usize {
         let n = self.tops.len().max(1);
+        let forward = if self.rtl { !visual_right } else { visual_right };
         if forward { (i + 1) % n } else { (i + n - 1) % n }
     }
 
@@ -328,8 +334,8 @@ impl MenuKeys {
                 } else {
                     None
                 };
-                if let Some(forward) = side {
-                    let j = self.step(i, forward);
+                if let Some(visual_right) = side {
+                    let j = self.step(i, visual_right);
                     if open {
                         self.open(ctx, j);
                     } else {
@@ -402,8 +408,9 @@ impl MenuKeys {
     }
 
     /// After the bar drew: focus moves, and the arrows and Esc stay with the bar.
-    fn after(&mut self, ctx: &egui::Context, tops: Vec<egui::Id>) {
+    fn after(&mut self, ctx: &egui::Context, tops: Vec<egui::Id>, rtl: bool) {
         self.tops = tops;
+        self.rtl = rtl;
         if !Self::available() {
             return;
         }
@@ -853,5 +860,28 @@ pub(crate) fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &
             ui.label(text(Type::Caption, trn!("{n} command is scriptable with anicraft-cli", "{n} commands are scriptable with anicraft-cli", cmds.len())));
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MenuKeys;
+
+    #[test]
+    fn menu_step_respects_visual_row_direction() {
+        let mut keys = MenuKeys {
+            tops: (0..9).map(|i| egui::Id::new(("menu_top", i))).collect(),
+            rtl: false,
+            ..Default::default()
+        };
+        // LTR: File(0) is on the left, Edit(1) is to its right, View(2) is farther right.
+        assert_eq!(keys.step(1, true), 2);
+        assert_eq!(keys.step(1, false), 0);
+        // RTL: File(0) is on the right, Edit(1) is left of File, View(2) is farther left.
+        keys.rtl = true;
+        assert_eq!(keys.step(1, true), 0);
+        assert_eq!(keys.step(1, false), 2);
+        assert_eq!(keys.step(0, true), 8);
+        assert_eq!(keys.step(8, false), 0);
     }
 }

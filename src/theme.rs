@@ -1092,6 +1092,109 @@ pub fn access_key_label(s: &str, at: Option<usize>) -> egui::text::LayoutJob {
     job
 }
 
+/// Styled text in a role that preserves its logical reading-order string alongside the
+/// visually reordered `RichText` so accessibility labels and multi-line wrapping never see
+/// pre-reordered characters.
+#[derive(Clone)]
+pub struct Text {
+    rich: egui::RichText,
+    logical: String,
+    role: Type,
+    color_override: Option<Color32>,
+}
+
+impl Text {
+    /// Override the role colour while preserving the logical string for wrapping and accessibility.
+    pub fn color(mut self, c: Color32) -> Self {
+        self.rich = self.rich.color(c);
+        self.color_override = Some(c);
+        self
+    }
+
+    /// Render the text in bold while preserving the logical string.
+    pub fn strong(mut self) -> Self {
+        self.rich = self.rich.strong();
+        self
+    }
+
+    /// Render the text in italics while preserving the logical string.
+    pub fn italics(mut self) -> Self {
+        self.rich = self.rich.italics();
+        self
+    }
+
+    /// Render the text underlined while preserving the logical string.
+    pub fn underline(mut self) -> Self {
+        self.rich = self.rich.underline();
+        self
+    }
+
+    /// Original logical reading-order text before visual RTL reordering.
+    pub fn logical(&self) -> &str {
+        &self.logical
+    }
+}
+
+impl From<Text> for egui::WidgetText {
+    fn from(t: Text) -> Self {
+        egui::WidgetText::RichText(std::sync::Arc::new(t.rich))
+    }
+}
+
+/// Inputs accepted by [`checkbox`], [`radio_value`], [`label`], and [`form_note`], carrying an
+/// optional `(role, color_override, logical_text)` so controls keep logical accessibility names
+/// and multi-line notes wrap logically before per-row visual reordering.
+pub trait StyledText {
+    fn into_styled(self) -> (egui::WidgetText, Option<(Type, Option<Color32>, String)>);
+}
+
+impl StyledText for Text {
+    fn into_styled(self) -> (egui::WidgetText, Option<(Type, Option<Color32>, String)>) {
+        let meta = (self.role, self.color_override, self.logical);
+        (egui::WidgetText::RichText(std::sync::Arc::new(self.rich)), Some(meta))
+    }
+}
+
+impl StyledText for &str {
+    fn into_styled(self) -> (egui::WidgetText, Option<(Type, Option<Color32>, String)>) {
+        let visual = crate::i18n::display(self).into_owned();
+        (egui::WidgetText::Text(visual), Some((Type::Body, None, self.to_owned())))
+    }
+}
+
+impl StyledText for String {
+    fn into_styled(self) -> (egui::WidgetText, Option<(Type, Option<Color32>, String)>) {
+        let visual = crate::i18n::display(&self).into_owned();
+        (egui::WidgetText::Text(visual), Some((Type::Body, None, self)))
+    }
+}
+
+impl StyledText for std::borrow::Cow<'_, str> {
+    fn into_styled(self) -> (egui::WidgetText, Option<(Type, Option<Color32>, String)>) {
+        let logical = self.into_owned();
+        let visual = crate::i18n::display(&logical).into_owned();
+        (egui::WidgetText::Text(visual), Some((Type::Body, None, logical)))
+    }
+}
+
+impl StyledText for egui::RichText {
+    fn into_styled(self) -> (egui::WidgetText, Option<(Type, Option<Color32>, String)>) {
+        (egui::WidgetText::RichText(std::sync::Arc::new(self)), None)
+    }
+}
+
+impl StyledText for egui::WidgetText {
+    fn into_styled(self) -> (egui::WidgetText, Option<(Type, Option<Color32>, String)>) {
+        (self, None)
+    }
+}
+
+impl StyledText for egui::text::LayoutJob {
+    fn into_styled(self) -> (egui::WidgetText, Option<(Type, Option<Color32>, String)>) {
+        (egui::WidgetText::LayoutJob(std::sync::Arc::new(self)), None)
+    }
+}
+
 /// Text in a role using logical character order without RTL reordering (internal helper for
 /// pre-wrapped rows and raw glyphs).
 pub fn text_logical(t: Type, s: impl Into<String>) -> egui::RichText {
@@ -1103,11 +1206,23 @@ pub fn text_logical(t: Type, s: impl Into<String>) -> egui::RichText {
 }
 
 /// Text in a role: font, size, colour (and weight for titles and headings). Applies visual RTL
-/// reordering for single-line text when the active UI language is right to left.
-pub fn text(t: Type, s: impl Into<String>) -> egui::RichText {
-    let raw = s.into();
-    let visual = crate::i18n::display(&raw).into_owned();
-    text_logical(t, visual)
+/// reordering for single-line text when the active UI language is right to left while keeping the
+/// original logical string for accessibility and multi-line wrapping.
+pub fn text(t: Type, s: impl Into<String>) -> Text {
+    let logical = s.into();
+    let visual = crate::i18n::display(&logical).into_owned();
+    Text { rich: text_logical(t, visual), logical, role: t, color_override: None }
+}
+
+/// Single-line label that displays visual RTL text while keeping the logical string for AccessKit.
+pub fn label(ui: &mut egui::Ui, text: impl StyledText) -> egui::Response {
+    use crate::a11y::Named;
+    let (wt, meta) = text.into_styled();
+    let resp = ui.label(wt);
+    if let Some((_, _, logical)) = meta.filter(|(_, _, s)| !s.is_empty() && crate::i18n::is_rtl()) {
+        resp.set_name(&logical);
+    }
+    resp
 }
 
 /// Wraps `logical` in logical reading order at the available width, reorders each visual row when
@@ -1147,7 +1262,8 @@ pub fn wrapped_label(ui: &mut egui::Ui, role: Type, logical: &str) -> egui::Resp
 }
 
 fn wrap_logical_lines(ui: &egui::Ui, font_id: &egui::FontId, logical: &str, max_width: f32) -> Vec<String> {
-    let space_w = ui.fonts_mut(|f| f.layout_no_wrap(" ".to_owned(), font_id.clone(), Color32::WHITE).rect.width());
+    let measure = |s: &str| ui.fonts_mut(|f| f.layout_no_wrap(s.to_owned(), font_id.clone(), Color32::WHITE).rect.width());
+    let space_w = measure(" ");
     let mut lines = Vec::new();
     for para in logical.split('\n') {
         if para.is_empty() {
@@ -1157,18 +1273,44 @@ fn wrap_logical_lines(ui: &egui::Ui, font_id: &egui::FontId, logical: &str, max_
         let mut current = String::new();
         let mut cur_w = 0.0f32;
         for word in para.split_whitespace() {
-            let word_w = ui.fonts_mut(|f| f.layout_no_wrap(word.to_owned(), font_id.clone(), Color32::WHITE).rect.width());
-            if current.is_empty() {
-                current.push_str(word);
-                cur_w = word_w;
-            } else if cur_w + space_w + word_w <= max_width {
+            let word_w = measure(word);
+            if !current.is_empty() && cur_w + space_w + word_w <= max_width {
                 current.push(' ');
                 current.push_str(word);
                 cur_w += space_w + word_w;
-            } else {
+                continue;
+            }
+            if !current.is_empty() {
                 lines.push(std::mem::take(&mut current));
+                cur_w = 0.0;
+            }
+            if word_w <= max_width {
                 current.push_str(word);
                 cur_w = word_w;
+            } else {
+                // Split oversized words/filenames at character boundaries, always consuming >= 1 char.
+                let mut rest = word;
+                while !rest.is_empty() {
+                    let ends: Vec<usize> = rest.char_indices().map(|(idx, ch)| idx + ch.len_utf8()).collect();
+                    let mut lo = 1usize;
+                    let mut hi = ends.len();
+                    while lo < hi {
+                        let mid = (lo + hi).div_ceil(2);
+                        if measure(&rest[..ends[mid - 1]]) <= max_width {
+                            lo = mid;
+                        } else {
+                            hi = mid - 1;
+                        }
+                    }
+                    let (chunk, tail) = rest.split_at(ends[lo - 1]);
+                    rest = tail;
+                    if rest.is_empty() {
+                        cur_w = measure(chunk);
+                        current.push_str(chunk);
+                    } else {
+                        lines.push(chunk.to_owned());
+                    }
+                }
             }
         }
         lines.push(current);
@@ -1191,37 +1333,21 @@ fn with_control_edges<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R
     .inner
 }
 
-pub fn checkbox(ui: &mut egui::Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+pub fn checkbox(ui: &mut egui::Ui, on: &mut bool, label: impl StyledText) -> egui::Response {
     use crate::a11y::Named;
-    let wt: egui::WidgetText = label.into();
-    let logical = match &wt {
-        egui::WidgetText::Text(s) => Some(s.clone()),
-        _ => None,
-    };
-    let wt = match wt {
-        egui::WidgetText::Text(s) => egui::WidgetText::Text(crate::i18n::display(&s).into_owned()),
-        other => other,
-    };
+    let (wt, meta) = label.into_styled();
     let resp = with_control_edges(ui, |ui| ui.checkbox(on, wt));
-    if let Some(name) = logical.filter(|s| !s.is_empty() && crate::i18n::is_rtl()) {
+    if let Some((_, _, name)) = meta.filter(|(_, _, s)| !s.is_empty() && crate::i18n::is_rtl()) {
         resp.set_name(&name);
     }
     resp
 }
 
-pub fn radio_value<V: PartialEq>(ui: &mut egui::Ui, current: &mut V, value: V, label: impl Into<egui::WidgetText>) -> egui::Response {
+pub fn radio_value<V: PartialEq>(ui: &mut egui::Ui, current: &mut V, value: V, label: impl StyledText) -> egui::Response {
     use crate::a11y::Named;
-    let wt: egui::WidgetText = label.into();
-    let logical = match &wt {
-        egui::WidgetText::Text(s) => Some(s.clone()),
-        _ => None,
-    };
-    let wt = match wt {
-        egui::WidgetText::Text(s) => egui::WidgetText::Text(crate::i18n::display(&s).into_owned()),
-        other => other,
-    };
+    let (wt, meta) = label.into_styled();
     let resp = with_control_edges(ui, |ui| ui.radio_value(current, value, wt));
-    if let Some(name) = logical.filter(|s| !s.is_empty() && crate::i18n::is_rtl()) {
+    if let Some((_, _, name)) = meta.filter(|(_, _, s)| !s.is_empty() && crate::i18n::is_rtl()) {
         resp.set_name(&name);
     }
     resp
@@ -1282,17 +1408,19 @@ pub fn form_row<R>(ui: &mut egui::Ui, label_w: f32, label: &str, add: impl FnOnc
 
 /// A note that belongs to the controls above it (an explanation, a preview): aligned with the
 /// control column, wrapping within it, never back at the label column.
-pub fn form_note(ui: &mut egui::Ui, label_w: f32, note: impl Into<egui::WidgetText>) {
-    let wt: egui::WidgetText = note.into();
+pub fn form_note(ui: &mut egui::Ui, label_w: f32, note: impl StyledText) {
+    let (wt, meta) = note.into_styled();
     ui.with_layout(row_layout(), |ui| {
         // A row puts one item spacing between its label column and the controls.
         ui.add_space(label_w + ui.spacing().item_spacing.x);
-        match wt {
-            egui::WidgetText::Text(s) => {
-                wrapped_label(ui, Type::Caption, &s);
+        match meta {
+            Some((role, color_override, logical)) => {
+                let effective_role = if matches!(wt, egui::WidgetText::Text(_)) { Type::Caption } else { role };
+                let col = color_override.unwrap_or_else(|| color(effective_role));
+                wrapped_label_with_sense(ui, effective_role, col, egui::Sense::hover(), &logical);
             }
-            other => {
-                ui.add(egui::Label::new(other).wrap());
+            None => {
+                ui.add(egui::Label::new(wt).wrap());
             }
         }
     });
@@ -1491,4 +1619,42 @@ pub const HIT_AREA_ALPHA: f32 = 0.35;
 /// The tint and opacity a button's hit area is drawn in (ADR 0057).
 pub fn hit_area() -> (anicraft_engine::doc::Rgba, f32) {
     (to_rgba(T.hit_area), HIT_AREA_ALPHA)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn styled_text_preserves_logical_label_and_role_for_wrappers() {
+        let styled = text(Type::Caption, "שלום עולם").color(T.error).strong();
+        assert_eq!(styled.logical(), "שלום עולם");
+        let (_, meta) = styled.into_styled();
+        assert_eq!(meta, Some((Type::Caption, Some(T.error), "שלום עולם".to_owned())));
+    }
+
+    #[test]
+    fn wrap_logical_lines_splits_oversized_words_without_overflow() {
+        let ctx = egui::Context::default();
+        let font_id = font(Type::Path);
+        let word = "very_long_filename_without_spaces_1234567890.anicraft";
+        let mut lines_normal = Vec::new();
+        let mut lines_tiny = Vec::new();
+        let mut max_line_w = 0.0f32;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let max_w = 80.0;
+            lines_normal = wrap_logical_lines(ui, &font_id, word, max_w);
+            max_line_w = lines_normal
+                .iter()
+                .map(|l| ui.fonts_mut(|f| f.layout_no_wrap(l.clone(), font_id.clone(), Color32::WHITE).rect.width()))
+                .fold(0.0f32, f32::max);
+            lines_tiny = wrap_logical_lines(ui, &font_id, "אבג", 0.5);
+        })
+        .textures_delta
+        .clear();
+        assert!(lines_normal.len() > 1, "oversized word must split: {lines_normal:?}");
+        assert_eq!(lines_normal.concat(), word);
+        assert!(max_line_w <= 80.0 + 0.01, "line width {max_line_w} exceeded 80.0");
+        assert_eq!(lines_tiny, vec!["א", "ב", "ג"], "must consume >= 1 char even when max_width < glyph width");
+    }
 }

@@ -420,11 +420,12 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
                             crate::i18n::display_for(name.as_ref(), crate::i18n::is_rtl_code(&p.language)).into_owned()
                         };
                         egui::ComboBox::from_id_salt("pref_language").width(260.0).selected_text(crate::theme::text_logical(Type::Body, current)).show_ui(ui, |ui| {
-                            ui.selectable_value(&mut p.language, auto.to_string(), text(Type::Body, tr!("System language ({name})", name = crate::i18n::system_choice())));
+                            let sys_choice = tr!("System language ({name})", name = crate::i18n::system_choice());
+                            ui.selectable_value(&mut p.language, auto.to_string(), text(Type::Body, &sys_choice)).named(&sys_choice);
                             ui.separator();
                             for (code, name) in crate::i18n::offered() {
                                 let label = crate::i18n::display_for(name, crate::i18n::is_rtl_code(code)).into_owned();
-                                ui.selectable_value(&mut p.language, code.to_string(), crate::theme::text_logical(Type::Body, label));
+                                ui.selectable_value(&mut p.language, code.to_string(), crate::theme::text_logical(Type::Body, label)).named(name);
                             }
                         })
                         .response
@@ -545,8 +546,8 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
                     ui.add_space(4.0);
                     form_row(ui, LW, tr!("Preview"), |ui| {
                         ui.vertical(|ui| {
-                            ui.label(text(Type::Body, tr!("Layer names, menus and dialog text read like this.")));
-                            ui.label(text(Type::Data, tr!("Frame {frame} · {seconds} s · X {x} Y {y} · {keys}", frame = "0042", seconds = "1.75", x = "1280.5", y = "720.0", keys = crate::platform::shortcut_label("Ctrl+Shift+S"))));
+                            crate::theme::label(ui, text(Type::Body, tr!("Layer names, menus and dialog text read like this.")));
+                            crate::theme::label(ui, text(Type::Data, tr!("Frame {frame} · {seconds} s · X {x} Y {y} · {keys}", frame = "0042", seconds = "1.75", x = "1280.5", y = "720.0", keys = crate::platform::shortcut_label("Ctrl+Shift+S"))));
                         });
                     });
                     ui.add_space(4.0);
@@ -688,7 +689,8 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
                             let shown = crate::prefs::AUTOSAVE_INTERVALS.iter().find(|(s, _)| *s == p.autosave_secs).map_or_else(|| trn!("{n} second", "{n} seconds", p.autosave_secs), |(_, l)| crate::i18n::t(l).to_string());
                             egui::ComboBox::from_id_salt("pref_autosave_secs").width(160.0).selected_text(text(Type::Body, shown)).show_ui(ui, |ui| {
                                 for (secs, label) in crate::prefs::AUTOSAVE_INTERVALS {
-                                    ui.selectable_value(&mut p.autosave_secs, secs, text(Type::Body, crate::i18n::t(label)));
+                                    let label_text = crate::i18n::t(label);
+                                    ui.selectable_value(&mut p.autosave_secs, secs, text(Type::Body, label_text)).named(label_text);
                                 }
                             })
                             .response
