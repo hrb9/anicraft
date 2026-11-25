@@ -676,7 +676,8 @@ pub fn shortfalls(t: &Tokens, standard: Standard) -> Vec<Shortfall> {
     need("on_fill on accent".into(), t.on_fill, t.accent, 4.5, 4.5, true);
     need("on_fill on danger".into(), t.on_fill, t.danger, 4.5, 4.5, true);
     // Marks on timeline blocks and the playhead's number; the blocks against the grid.
-    for (b, bg) in [("span", t.span), ("tween", t.tween), ("tween_shape", t.tween_shape), ("tween_motion", t.tween_motion), ("playhead", t.playhead)] {
+    for (b, bg) in [("span", t.span), ("tween", t.tween), ("tween_shape", t.tween_shape), ("tween_motion", t.tween_motion), ("playhead", t.playhead)]
+    {
         need(format!("ink on {b}"), t.ink, bg, 4.5, 4.5, true);
         need(format!("{b} on panel"), bg, t.panel, 3.0, 3.0, false);
     }
@@ -965,7 +966,9 @@ pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font:
     use egui::{FontData, FontDefinitions, FontFamily};
     use std::sync::Arc;
     let mut defs = FontDefinitions::default();
-    for (bytes, name, family) in [(craft_fonts::UI_FONT, "craft-inter", FontFamily::Proportional), (craft_fonts::MONO_FONT, "craft-jetbrains-mono", FontFamily::Monospace)] {
+    for (bytes, name, family) in
+        [(craft_fonts::UI_FONT, "craft-inter", FontFamily::Proportional), (craft_fonts::MONO_FONT, "craft-jetbrains-mono", FontFamily::Monospace)]
+    {
         if let Some(b) = bytes {
             defs.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(b)));
             defs.families.entry(family).or_default().insert(0, name.to_owned());
@@ -1062,9 +1065,17 @@ pub fn color(t: Type) -> Color32 {
     }
 }
 
+/// Horizontal row layout matching the active language direction.
+pub fn row_layout() -> egui::Layout {
+    if crate::i18n::is_rtl() { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) }
+}
+
 /// A menu title with its access key underlined (ADR 0064), as Windows and Linux show it while
 /// Alt is held or the menu bar has the keyboard. `at`: the character (not byte) to underline.
 pub fn access_key_label(s: &str, at: Option<usize>) -> egui::text::LayoutJob {
+    let visual = crate::i18n::display(s);
+    let at = if crate::i18n::is_rtl() { at.and_then(|i| s.chars().nth(i)).and_then(|ch| visual.chars().position(|c| c == ch)) } else { at };
+    let s = visual.as_ref();
     let mut job = egui::text::LayoutJob::default();
     let plain = egui::TextFormat { font_id: font(Type::Body), color: Color32::PLACEHOLDER, ..Default::default() };
     let marked = egui::TextFormat { underline: Stroke::new(1.0, T.text), ..plain.clone() };
@@ -1081,13 +1092,91 @@ pub fn access_key_label(s: &str, at: Option<usize>) -> egui::text::LayoutJob {
     job
 }
 
-/// Text in a role: font, size, colour (and weight for titles and headings).
-pub fn text(t: Type, s: impl Into<String>) -> egui::RichText {
+/// Text in a role using logical character order without RTL reordering (internal helper for
+/// pre-wrapped rows and raw glyphs).
+pub fn text_logical(t: Type, s: impl Into<String>) -> egui::RichText {
     let rt = egui::RichText::new(s).font(font(t)).color(color(t));
     match t {
         Type::Title | Type::Heading => rt.strong(),
         _ => rt,
     }
+}
+
+/// Text in a role: font, size, colour (and weight for titles and headings). Applies visual RTL
+/// reordering for single-line text when the active UI language is right to left.
+pub fn text(t: Type, s: impl Into<String>) -> egui::RichText {
+    let raw = s.into();
+    let visual = crate::i18n::display(&raw).into_owned();
+    text_logical(t, visual)
+}
+
+/// Wraps `logical` in logical reading order at the available width, reorders each visual row when
+/// RTL is active, and keeps `logical` on the AccessKit label.
+pub fn wrapped_label_with_sense(ui: &mut egui::Ui, role: Type, col: Color32, sense: egui::Sense, logical: &str) -> egui::Response {
+    if !crate::i18n::is_rtl() {
+        return ui.add(egui::Label::new(text_logical(role, logical).color(col)).sense(sense).wrap());
+    }
+    let font_id = font(role);
+    let max_width = ui.available_width().max(1.0);
+    let lines = wrap_logical_lines(ui, &font_id, logical, max_width);
+    let line_height = ui.fonts_mut(|f| f.row_height(&font_id));
+    let galleys: Vec<std::sync::Arc<egui::Galley>> = lines
+        .into_iter()
+        .map(|line| {
+            let visual = crate::i18n::display(&line).into_owned();
+            ui.painter().layout_no_wrap(visual, font_id.clone(), col)
+        })
+        .collect();
+    let max_w = galleys.iter().map(|g| g.rect.width()).fold(0.0f32, f32::max).min(max_width);
+    let total_h = galleys.iter().map(|g| g.rect.height().max(line_height)).sum::<f32>().max(line_height);
+    let alloc_w = max_w.max(1.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(alloc_w, total_h), sense);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), logical));
+    let mut y = rect.top();
+    for g in galleys {
+        let h = g.rect.height().max(line_height);
+        let x = (rect.right() - g.rect.width()).max(rect.left());
+        ui.painter().galley(egui::pos2(x, y), g, col);
+        y += h;
+    }
+    resp
+}
+
+pub fn wrapped_label(ui: &mut egui::Ui, role: Type, logical: &str) -> egui::Response {
+    wrapped_label_with_sense(ui, role, color(role), egui::Sense::hover(), logical)
+}
+
+fn wrap_logical_lines(ui: &egui::Ui, font_id: &egui::FontId, logical: &str, max_width: f32) -> Vec<String> {
+    let space_w = ui.fonts_mut(|f| f.layout_no_wrap(" ".to_owned(), font_id.clone(), Color32::WHITE).rect.width());
+    let mut lines = Vec::new();
+    for para in logical.split('\n') {
+        if para.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        let mut cur_w = 0.0f32;
+        for word in para.split_whitespace() {
+            let word_w = ui.fonts_mut(|f| f.layout_no_wrap(word.to_owned(), font_id.clone(), Color32::WHITE).rect.width());
+            if current.is_empty() {
+                current.push_str(word);
+                cur_w = word_w;
+            } else if cur_w + space_w + word_w <= max_width {
+                current.push(' ');
+                current.push_str(word);
+                cur_w += space_w + word_w;
+            } else {
+                lines.push(std::mem::take(&mut current));
+                current.push_str(word);
+                cur_w = word_w;
+            }
+        }
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 /// Buttons have no resting border, but a checkbox or radio button without one would vanish
@@ -1103,11 +1192,39 @@ fn with_control_edges<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R
 }
 
 pub fn checkbox(ui: &mut egui::Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
-    with_control_edges(ui, |ui| ui.checkbox(on, label))
+    use crate::a11y::Named;
+    let wt: egui::WidgetText = label.into();
+    let logical = match &wt {
+        egui::WidgetText::Text(s) => Some(s.clone()),
+        _ => None,
+    };
+    let wt = match wt {
+        egui::WidgetText::Text(s) => egui::WidgetText::Text(crate::i18n::display(&s).into_owned()),
+        other => other,
+    };
+    let resp = with_control_edges(ui, |ui| ui.checkbox(on, wt));
+    if let Some(name) = logical.filter(|s| !s.is_empty() && crate::i18n::is_rtl()) {
+        resp.set_name(&name);
+    }
+    resp
 }
 
 pub fn radio_value<V: PartialEq>(ui: &mut egui::Ui, current: &mut V, value: V, label: impl Into<egui::WidgetText>) -> egui::Response {
-    with_control_edges(ui, |ui| ui.radio_value(current, value, label))
+    use crate::a11y::Named;
+    let wt: egui::WidgetText = label.into();
+    let logical = match &wt {
+        egui::WidgetText::Text(s) => Some(s.clone()),
+        _ => None,
+    };
+    let wt = match wt {
+        egui::WidgetText::Text(s) => egui::WidgetText::Text(crate::i18n::display(&s).into_owned()),
+        other => other,
+    };
+    let resp = with_control_edges(ui, |ui| ui.radio_value(current, value, wt));
+    if let Some(name) = logical.filter(|s| !s.is_empty() && crate::i18n::is_rtl()) {
+        resp.set_name(&name);
+    }
+    resp
 }
 
 /// The narrowest a field or list shrinks to in a narrow panel (ADR 0087).
@@ -1137,19 +1254,21 @@ pub fn form_row<R>(ui: &mut egui::Ui, label_w: f32, label: &str, add: impl FnOnc
     let gap = ui.spacing().item_spacing.x;
     let need: Option<f32> = ui.data(|d| d.get_temp(id));
     if need.is_some_and(|n| label_w + gap + n > avail + 0.5) {
-        ui.add(egui::Label::new(text(Type::Label, label)).wrap());
+        wrapped_label(ui, Type::Label, label);
         return ui.horizontal_wrapped(add).inner;
     }
+    let rtl = crate::i18n::is_rtl();
     let (r, used) = ui
-        .horizontal(|ui| {
-            ui.allocate_ui_with_layout(egui::vec2(label_w, TARGET), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        .with_layout(row_layout(), |ui| {
+            ui.allocate_ui_with_layout(egui::vec2(label_w, TARGET), row_layout(), |ui| {
                 ui.set_min_size(egui::vec2(label_w, TARGET));
                 ui.set_max_width(label_w);
-                ui.add(egui::Label::new(text(Type::Label, label)).wrap());
+                wrapped_label(ui, Type::Label, label);
             });
-            let start = ui.cursor().left();
+            let start = if rtl { ui.cursor().right() } else { ui.cursor().left() };
             let r = add(ui);
-            (r, ui.min_rect().right() - start)
+            let span = if rtl { start - ui.min_rect().left() } else { ui.min_rect().right() - start };
+            (r, span)
         })
         .inner;
     if need.is_none_or(|n| (n - used).abs() > 0.5) {
@@ -1164,10 +1283,18 @@ pub fn form_row<R>(ui: &mut egui::Ui, label_w: f32, label: &str, add: impl FnOnc
 /// A note that belongs to the controls above it (an explanation, a preview): aligned with the
 /// control column, wrapping within it, never back at the label column.
 pub fn form_note(ui: &mut egui::Ui, label_w: f32, note: impl Into<egui::WidgetText>) {
-    ui.horizontal(|ui| {
+    let wt: egui::WidgetText = note.into();
+    ui.with_layout(row_layout(), |ui| {
         // A row puts one item spacing between its label column and the controls.
         ui.add_space(label_w + ui.spacing().item_spacing.x);
-        ui.add(egui::Label::new(note).wrap());
+        match wt {
+            egui::WidgetText::Text(s) => {
+                wrapped_label(ui, Type::Caption, &s);
+            }
+            other => {
+                ui.add(egui::Label::new(other).wrap());
+            }
+        }
     });
 }
 
@@ -1189,7 +1316,14 @@ pub fn section<R>(ui: &mut egui::Ui, id: &str, style: Section, title: &str, deta
 }
 
 /// [`section`], also returning its header (a panel's keyboard anchor, `a11y::anchor`).
-pub fn section_with_header<R>(ui: &mut egui::Ui, id: &str, style: Section, title: &str, detail: Option<&str>, add: impl FnOnce(&mut egui::Ui) -> R) -> (egui::Response, Option<R>) {
+pub fn section_with_header<R>(
+    ui: &mut egui::Ui,
+    id: &str,
+    style: Section,
+    title: &str,
+    detail: Option<&str>,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> (egui::Response, Option<R>) {
     use egui::{Sense, StrokeKind, pos2, vec2};
     let key = ui.make_persistent_id(("section", id));
     let mut open = ui.data_mut(|d| *d.get_temp_mut_or(key, true));
@@ -1201,6 +1335,7 @@ pub fn section_with_header<R>(ui: &mut egui::Ui, id: &str, style: Section, title
     }
     let enabled = ui.is_enabled();
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, enabled, open, title));
+    let rtl = crate::i18n::is_rtl();
     let p = ui.painter();
     let hot = resp.hovered() || resp.has_focus();
     match style {
@@ -1208,7 +1343,8 @@ pub fn section_with_header<R>(ui: &mut egui::Ui, id: &str, style: Section, title
             p.rect_filled(rect, SQUARE, if hot { T.header } else { T.panel_alt });
             p.line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, T.border));
             p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(1.0, T.border));
-            accent_bar(p, egui::Rect::from_min_size(rect.left_top() + vec2(0.0, 1.0), vec2(3.0, rect.height() - 1.0)));
+            let bar_x = if rtl { rect.right() - 3.0 } else { rect.left() };
+            accent_bar(p, egui::Rect::from_min_size(pos2(bar_x, rect.top() + 1.0), vec2(3.0, rect.height() - 1.0)));
         }
         Section::Rule => {
             if hot {
@@ -1219,29 +1355,50 @@ pub fn section_with_header<R>(ui: &mut egui::Ui, id: &str, style: Section, title
     if resp.has_focus() {
         p.rect_stroke(rect.shrink(1.0), T.rc(), Stroke::new(2.0, T.accent), StrokeKind::Inside);
     }
-    // Chevron: right when closed, down when open.
-    let left = if style == Section::Band { 10.0 } else { 2.0 };
-    let chevron = egui::Rect::from_center_size(pos2(rect.left() + left + 7.0, rect.center().y), vec2(14.0, 14.0));
+    // Chevron: right/left when closed, down when open.
+    let pad = if style == Section::Band { 10.0 } else { 2.0 };
+    let chevron_cx = if rtl { rect.right() - pad - 7.0 } else { rect.left() + pad + 7.0 };
+    let chevron = egui::Rect::from_center_size(pos2(chevron_cx, rect.center().y), vec2(14.0, 14.0));
     let icon = if open { crate::icons::Icon::ChevronDown } else { crate::icons::Icon::ChevronRight };
     crate::icons::paint(p, chevron, icon, if hot { T.text } else { T.text_dim });
-    let mut x = rect.left() + left + 20.0;
-    // A title longer than the row (a narrow dock, a long translation) ends in "…" at its edge;
-    // the full title is the header's accessible name.
-    let mut job = egui::text::LayoutJob::simple_singleline(title.to_string(), font(Type::Heading), color(Type::Heading));
-    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.right() - x - 4.0).max(0.0));
-    let title_g = p.layout_job(job);
-    let w = title_g.rect.width();
-    p.galley(pos2(x, rect.center().y - title_g.rect.height() * 0.5), title_g, color(Type::Heading));
-    x += w;
-    if let Some(d) = detail {
-        let g = p.layout_no_wrap(d.to_string(), font(Type::Data), T.text_dim);
-        x += 8.0;
-        let dw = g.rect.width();
-        p.galley(pos2(x, rect.center().y - g.rect.height() * 0.5), g, T.text_dim);
-        x += dw;
-    }
-    if style == Section::Rule && x + 12.0 < rect.right() {
-        p.hline((x + 12.0)..=rect.right(), rect.center().y, Stroke::new(1.0, T.border));
+    let visual_title = crate::i18n::display(title).into_owned();
+    let mut job = egui::text::LayoutJob::simple_singleline(visual_title, font(Type::Heading), color(Type::Heading));
+    if rtl {
+        let mut x = rect.right() - pad - 20.0;
+        job.wrap = egui::text::TextWrapping::truncate_at_width((x - rect.left() - 4.0).max(0.0));
+        let title_g = p.layout_job(job);
+        let w = title_g.rect.width();
+        p.galley(pos2(x - w, rect.center().y - title_g.rect.height() * 0.5), title_g, color(Type::Heading));
+        x -= w;
+        if let Some(d) = detail {
+            let g = p.layout_no_wrap(crate::i18n::display(d).into_owned(), font(Type::Data), T.text_dim);
+            x -= 8.0;
+            let dw = g.rect.width();
+            p.galley(pos2(x - dw, rect.center().y - g.rect.height() * 0.5), g, T.text_dim);
+            x -= dw;
+        }
+        if style == Section::Rule && x - 12.0 > rect.left() {
+            p.hline(rect.left()..=(x - 12.0), rect.center().y, Stroke::new(1.0, T.border));
+        }
+    } else {
+        let mut x = rect.left() + pad + 20.0;
+        // A title longer than the row (a narrow dock, a long translation) ends in "…" at its edge;
+        // the full title is the header's accessible name.
+        job.wrap = egui::text::TextWrapping::truncate_at_width((rect.right() - x - 4.0).max(0.0));
+        let title_g = p.layout_job(job);
+        let w = title_g.rect.width();
+        p.galley(pos2(x, rect.center().y - title_g.rect.height() * 0.5), title_g, color(Type::Heading));
+        x += w;
+        if let Some(d) = detail {
+            let g = p.layout_no_wrap(d.to_string(), font(Type::Data), T.text_dim);
+            x += 8.0;
+            let dw = g.rect.width();
+            p.galley(pos2(x, rect.center().y - g.rect.height() * 0.5), g, T.text_dim);
+            x += dw;
+        }
+        if style == Section::Rule && x + 12.0 < rect.right() {
+            p.hline((x + 12.0)..=rect.right(), rect.center().y, Stroke::new(1.0, T.border));
+        }
     }
     if !open {
         if style == Section::Rule {
@@ -1274,7 +1431,13 @@ pub fn to_rgba(c: Color32) -> anicraft_engine::doc::Rgba {
 
 /// The heat map of a bone's weights (ADR 0090), the same in every palette because it is drawn
 /// over artwork: blue (none) through cyan, green and yellow to red (all of the point).
-pub const HEAT: [Color32; 5] = [Color32::from_rgb(0x2b, 0x4c, 0xd9), Color32::from_rgb(0x1f, 0xb5, 0xd6), Color32::from_rgb(0x2f, 0xc2, 0x5a), Color32::from_rgb(0xf2, 0xd0, 0x2a), Color32::from_rgb(0xe8, 0x3a, 0x2a)];
+pub const HEAT: [Color32; 5] = [
+    Color32::from_rgb(0x2b, 0x4c, 0xd9),
+    Color32::from_rgb(0x1f, 0xb5, 0xd6),
+    Color32::from_rgb(0x2f, 0xc2, 0x5a),
+    Color32::from_rgb(0xf2, 0xd0, 0x2a),
+    Color32::from_rgb(0xe8, 0x3a, 0x2a),
+];
 
 /// The colour of weight `w` (0…1) on [`HEAT`], blended between its stops.
 pub fn heat(w: f32) -> Color32 {
@@ -1307,7 +1470,12 @@ pub(crate) fn artwork_rgb(r: u8, g: u8, b: u8) -> Color32 {
 
 pub fn to_color32(c: anicraft_engine::doc::Rgba) -> Color32 {
     let c = c.sanitized();
-    Color32::from_rgba_unmultiplied((c.r * 255.0).round() as u8, (c.g * 255.0).round() as u8, (c.b * 255.0).round() as u8, (c.a * 255.0).round() as u8)
+    Color32::from_rgba_unmultiplied(
+        (c.r * 255.0).round() as u8,
+        (c.g * 255.0).round() as u8,
+        (c.b * 255.0).round() as u8,
+        (c.a * 255.0).round() as u8,
+    )
 }
 
 /// Where a dragged panel tab would dock (ADR 0075): the accent, light enough to see the

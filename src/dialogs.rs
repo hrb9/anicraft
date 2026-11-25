@@ -413,12 +413,18 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
                     // current one finds it at the top. Each language is named in itself.
                     form_row(ui, LW, tr!("Language"), |ui| {
                         let auto = crate::i18n::AUTO;
-                        let current = if p.language == auto { tr!("System language ({name})", name = crate::i18n::system_choice()) } else { crate::i18n::name_of(&p.language).into_owned() };
-                        egui::ComboBox::from_id_salt("pref_language").width(260.0).selected_text(text(Type::Body, current)).show_ui(ui, |ui| {
+                        let current = if p.language == auto {
+                            crate::i18n::display(&tr!("System language ({name})", name = crate::i18n::system_choice())).into_owned()
+                        } else {
+                            let name = crate::i18n::name_of(&p.language);
+                            crate::i18n::display_for(name.as_ref(), crate::i18n::is_rtl_code(&p.language)).into_owned()
+                        };
+                        egui::ComboBox::from_id_salt("pref_language").width(260.0).selected_text(crate::theme::text_logical(Type::Body, current)).show_ui(ui, |ui| {
                             ui.selectable_value(&mut p.language, auto.to_string(), text(Type::Body, tr!("System language ({name})", name = crate::i18n::system_choice())));
                             ui.separator();
                             for (code, name) in crate::i18n::offered() {
-                                ui.selectable_value(&mut p.language, code.to_string(), text(Type::Body, name));
+                                let label = crate::i18n::display_for(name, crate::i18n::is_rtl_code(code)).into_owned();
+                                ui.selectable_value(&mut p.language, code.to_string(), crate::theme::text_logical(Type::Body, label));
                             }
                         })
                         .response
@@ -519,7 +525,7 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
                                         theme_act = Some(ThemeAct::Export);
                                     }
                                 });
-                                ui.add(egui::Label::new(text(Type::Caption, tr!("A theme is a small file that names colours for the interface's roles. A theme whose text would be hard to read is not used, and says which colours to change."))).wrap());
+                                crate::theme::wrapped_label(ui, Type::Caption, tr!("A theme is a small file that names colours for the interface's roles. A theme whose text would be hard to read is not used, and says which colours to change."));
                             }
                         });
                     });
@@ -799,7 +805,7 @@ fn licenses(app: &mut App, ctx: &egui::Context) {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 for (title, body) in NOTICES {
                     egui::CollapsingHeader::new(crate::i18n::t(title)).id_salt(("notice", *title)).default_open(*title == "NOTICE").show(ui, |ui| {
-                        ui.add(egui::Label::new(text(Type::Path, *body)).wrap());
+                        ui.add(egui::Label::new(crate::theme::text_logical(Type::Path, *body)).wrap());
                     });
                 }
             });

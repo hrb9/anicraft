@@ -243,6 +243,7 @@ dependencies = [
  "anicraft-render",
  "arboard",
  "cpal",
+ "craft-text",
  "craft-update",
  "eframe",
  "egui",
