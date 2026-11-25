@@ -413,15 +413,16 @@ fn preferences(app: &mut App, ctx: &egui::Context) {
                     // current one finds it at the top. Each language is named in itself.
                     form_row(ui, LW, tr!("Language"), |ui| {
                         let auto = crate::i18n::AUTO;
+                        let (sys_code, sys_name) = crate::i18n::system_choice();
+                        let (sys_logical, sys_visual) = system_choice_labels(sys_code, sys_name);
                         let current = if p.language == auto {
-                            crate::i18n::display(&tr!("System language ({name})", name = crate::i18n::system_choice())).into_owned()
+                            sys_visual.clone()
                         } else {
                             let name = crate::i18n::name_of(&p.language);
                             crate::i18n::display_for(name.as_ref(), crate::i18n::is_rtl_code(&p.language)).into_owned()
                         };
                         egui::ComboBox::from_id_salt("pref_language").width(260.0).selected_text(crate::theme::text_logical(Type::Body, current)).show_ui(ui, |ui| {
-                            let sys_choice = tr!("System language ({name})", name = crate::i18n::system_choice());
-                            ui.selectable_value(&mut p.language, auto.to_string(), text(Type::Body, &sys_choice)).named(&sys_choice);
+                            ui.selectable_value(&mut p.language, auto.to_string(), crate::theme::text_logical(Type::Body, &sys_visual)).named(&sys_logical);
                             ui.separator();
                             for (code, name) in crate::i18n::offered() {
                                 let label = crate::i18n::display_for(name, crate::i18n::is_rtl_code(code)).into_owned();
@@ -1184,4 +1185,34 @@ fn shortcut_sheet(app: &mut App, ctx: &egui::Context) {
     }
     ctx.data_mut(|d| d.insert_temp(state_id, st));
     app.show_shortcuts = open;
+}
+
+/// Returns `(logical, visual)` labels for the "System language ({name})" picker entry.
+/// When the active UI is LTR and the system language is RTL, only the embedded name is
+/// reordered with its own script direction; when the active UI is RTL, the full phrase
+/// is reordered once by `i18n::display`.
+fn system_choice_labels(sys_code: &str, sys_name: &str) -> (String, String) {
+    let logical = tr!("System language ({name})", name = sys_name);
+    let visual = if crate::i18n::is_rtl() {
+        crate::i18n::display(&logical).into_owned()
+    } else {
+        let embedded = crate::i18n::display_for(sys_name, crate::i18n::is_rtl_code(sys_code));
+        tr!("System language ({name})", name = embedded)
+    };
+    (logical, visual)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::system_choice_labels;
+
+    #[test]
+    fn system_choice_labels_reorder_embedded_rtl_name_when_ui_is_ltr() {
+        let prev = crate::i18n::code();
+        crate::i18n::set_language("en");
+        let (logical, visual) = system_choice_labels("he", "עברית");
+        crate::i18n::set_language(prev);
+        assert_eq!(logical, "System language (עברית)");
+        assert_eq!(visual, "System language (תירבע)");
+    }
 }

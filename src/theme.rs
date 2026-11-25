@@ -1417,7 +1417,12 @@ pub fn form_note(ui: &mut egui::Ui, label_w: f32, note: impl StyledText) {
             Some((role, color_override, logical)) => {
                 let effective_role = if matches!(wt, egui::WidgetText::Text(_)) { Type::Caption } else { role };
                 let col = color_override.unwrap_or_else(|| color(effective_role));
-                wrapped_label_with_sense(ui, effective_role, col, egui::Sense::hover(), &logical);
+                if effective_role == Type::Path {
+                    // Paths keep literal spacing and logical order even when RTL prose wrapping is active.
+                    ui.add(egui::Label::new(text_logical(effective_role, logical).color(col)).wrap());
+                } else {
+                    wrapped_label_with_sense(ui, effective_role, col, egui::Sense::hover(), &logical);
+                }
             }
             None => {
                 ui.add(egui::Label::new(wt).wrap());
@@ -1656,5 +1661,27 @@ mod tests {
         assert_eq!(lines_normal.concat(), word);
         assert!(max_line_w <= 80.0 + 0.01, "line width {max_line_w} exceeded 80.0");
         assert_eq!(lines_tiny, vec!["א", "ב", "ג"], "must consume >= 1 char even when max_width < glyph width");
+    }
+
+    #[test]
+    fn form_note_preserves_repeated_spaces_for_path() {
+        let prev = crate::i18n::code();
+        crate::i18n::set_language("he");
+        let ctx = egui::Context::default();
+        let path = "/home/A  B/anicraft.log";
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            form_note(ui, FORM_LABEL_DIALOG, text(Type::Path, path));
+        });
+        out.textures_delta.clear();
+        crate::i18n::set_language(prev);
+        let rendered_texts: Vec<&str> = out
+            .shapes
+            .iter()
+            .filter_map(|cs| match &cs.shape {
+                egui::epaint::Shape::Text(ts) => Some(ts.galley.text()),
+                _ => None,
+            })
+            .collect();
+        assert!(rendered_texts.iter().any(|t| t.contains("A  B")), "Type::Path in form_note must preserve repeated spaces: {rendered_texts:?}");
     }
 }

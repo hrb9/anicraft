@@ -397,10 +397,11 @@ pub fn offered() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-/// The name of the language [`AUTO`] picks on this computer, for the picker's first entry.
-pub fn system_choice() -> &'static str {
+/// The resolved `(code, name)` pair [`AUTO`] picks on this computer, for the picker's first entry.
+pub fn system_choice() -> (&'static str, &'static str) {
     let system = if cfg!(test) { None } else { crate::platform::system_locale() };
-    LANGUAGES.get(LANGUAGES.resolve(AUTO, system.as_deref())).name.as_str()
+    let lang = LANGUAGES.get(LANGUAGES.resolve(AUTO, system.as_deref()));
+    (lang.code.as_str(), lang.name.as_str())
 }
 
 /// A language's own name, for the picker (the code itself when unknown).
