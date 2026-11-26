@@ -77,8 +77,14 @@ Signing is the trusted step's: `packaging/windows/sign.ps1 -Required`,
 
 ## Distribution wrappers
 
-Every Linux nightly format starts the program the flavor's way, through the one launcher
-`packaging/linux/nightly-launch.sh`:
+The plain nightly `.tar.gz` starts through `packaging/linux/nightly-launch.sh`, which is
+craft-common-actions's canonical launcher template (`scripts/nightly-launcher.sh.in`) rendered for
+this app's registry row: `anicraft` starts `anicraft-bin` beside it on the nightly-v1 profile under
+the Nightly package identity, and both `--version` and `-V` reach the GUI as one plain `--version`.
+The shared nightly producer accepts that entry point only byte for byte as rendered.
+
+The distro formats install `packaging/linux/nightly-package-launch.sh`, which starts the program the
+flavor's way in their own profile folder:
 
 ```sh
 exec <real-program> --launch-profile nightly-v1 --profile-root "${XDG_DATA_HOME:-$HOME/.local/share}/anicraft-nightly/profile" -- "$@"
@@ -87,10 +93,10 @@ exec <real-program> --launch-profile nightly-v1 --profile-root "${XDG_DATA_HOME:
 | Format | Installs the launcher as | Real program |
 |---|---|---|
 | `.deb` / `.rpm` | `/usr/bin/anicraft-nightly` | `/usr/lib/anicraft-nightly/anicraft` |
+| nightly `.tar.gz` (Launcher) | `anicraft` (the canonical template) | `anicraft-bin` beside it |
 | AppImage | `$APPDIR/AppRun` (a script, not a symlink) | `$APPDIR/usr/bin/anicraft` |
 | Arch handoff | `bin/anicraft` (shipped) | `bin/.anicraft-nightly/anicraft` |
 | Flatpak | `/app/bin/anicraft-nightly` (the bundle's `command:`) | `/app/bin/anicraft-bin` |
-| nightly `.tar.gz` | `anicraft` (the standard layout: the launcher keeps the app's name) | `anicraft-bin` beside it |
 
 The profile is a sibling of stable's data folder, never inside it and never containing it, and
 `anicraft --version` from the tar (or `anicraft-nightly --version` from a package) answers the

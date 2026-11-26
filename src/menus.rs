@@ -9,7 +9,17 @@ use anicraft_engine::{CommandSpec, commands};
 
 // Commands sits where Animate has it: after Modify, before Control.
 // English keys (the registry's menu paths start with them), translated where they are drawn.
-pub(crate) const TOP_MENUS: [&str; 9] = [tr_noop!("File"), tr_noop!("Edit"), tr_noop!("View"), tr_noop!("Insert"), tr_noop!("Modify"), tr_noop!("Commands"), tr_noop!("Control"), tr_noop!("Window"), tr_noop!("Help")];
+pub(crate) const TOP_MENUS: [&str; 9] = [
+    tr_noop!("File"),
+    tr_noop!("Edit"),
+    tr_noop!("View"),
+    tr_noop!("Insert"),
+    tr_noop!("Modify"),
+    tr_noop!("Commands"),
+    tr_noop!("Control"),
+    tr_noop!("Window"),
+    tr_noop!("Help"),
+];
 
 pub fn bar(app: &mut App, ui: &mut egui::Ui) {
     let cmds = commands();
@@ -48,7 +58,11 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
             // Windows and Linux: no name before the menus; the window title already shows it.
             for ((top, label), key) in TOP_MENUS.into_iter().zip(&labels).zip(&keys) {
                 let visual = i18n::display(label);
-                let title = if underline { egui::WidgetText::from(crate::theme::access_key_label(label, key.map(|(i, _)| i))) } else { egui::WidgetText::from(visual.as_ref()) };
+                let title = if underline {
+                    egui::WidgetText::from(crate::theme::access_key_label(label, key.map(|(i, _)| i)))
+                } else {
+                    egui::WidgetText::from(visual.as_ref())
+                };
                 let r = ui.menu_button(title, |ui| {
                     ui.set_min_width(230.0);
                     // The menu's own area, which egui leaves anonymous: a menu named by its title.
@@ -190,7 +204,11 @@ impl MenuKeys {
             let pass = if now { &vp.this_pass } else { &vp.prev_pass };
             // (Not the menu's own area, which egui makes clickable.)
             let area = layer.id.with("move");
-            pass.widgets.get_layer(layer).filter(|w| w.enabled && w.sense.is_focusable() && w.id != area).map(|w| (w.rect.top(), w.rect.left(), w.id)).collect()
+            pass.widgets
+                .get_layer(layer)
+                .filter(|w| w.enabled && w.sense.is_focusable() && w.id != area)
+                .map(|w| (w.rect.top(), w.rect.left(), w.id))
+                .collect()
         });
         v.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
         v.into_iter().map(|(_, _, id)| id).collect()
@@ -249,7 +267,9 @@ impl MenuKeys {
     /// Alt pressed and let go with nothing else in between.
     fn alt_tap(&mut self, ctx: &egui::Context) -> bool {
         let (alt, other, focused) = ctx.input(|i| {
-            let events = i.events.iter().any(|e| matches!(e, egui::Event::Key { .. } | egui::Event::PointerButton { .. } | egui::Event::Text(_) | egui::Event::MouseWheel { .. }));
+            let events = i.events.iter().any(|e| {
+                matches!(e, egui::Event::Key { .. } | egui::Event::PointerButton { .. } | egui::Event::Text(_) | egui::Event::MouseWheel { .. })
+            });
             (i.modifiers.alt, events || i.modifiers.ctrl || i.modifiers.shift || i.modifiers.mac_cmd, i.focused)
         });
         let mut tap = false;
@@ -271,7 +291,9 @@ impl MenuKeys {
     /// Alt+letter opens that menu, unless the shortcut table has the key (the user bound it).
     /// Runs before the shortcuts: egui matches a plain "H" with Alt held too.
     pub fn access_key(&mut self, ctx: &egui::Context, bound: impl Fn(egui::Key) -> bool) {
-        if !Self::available() || !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, modifiers, .. } if modifiers.alt))) {
+        if !Self::available()
+            || !ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, modifiers, .. } if modifiers.alt)))
+        {
             return;
         }
         let labels = top_labels();
@@ -458,12 +480,20 @@ fn enabled(app: &App, id: &str) -> bool {
     match id {
         "edit.undo" => app.s.can_undo(),
         "edit.redo" => app.s.can_redo(),
-        "edit.delete" | "edit.duplicate" | "modify.convert_to_symbol" | "modify.convert_to_bitmap" | "modify.break_apart" | "arrange.bring_to_front" | "arrange.send_to_back" => !app.s.selection.is_empty(),
+        "edit.delete"
+        | "edit.duplicate"
+        | "modify.convert_to_symbol"
+        | "modify.convert_to_bitmap"
+        | "modify.break_apart"
+        | "arrange.bring_to_front"
+        | "arrange.send_to_back" => !app.s.selection.is_empty(),
         // Modify › Shape (ADR 0109): what the selection has for them.
         "modify.trace_bitmap" => crate::trace_dialog::has_bitmap(app),
         "modify.lines_to_fills" => selected_shape(app, |sh| sh.stroke.is_some()),
         "modify.expand_fill" => selected_shape(app, |sh| sh.fill.is_some()),
-        "modify.soften_fill_edges" => selected_shape(app, |sh| sh.fill.as_ref().is_some_and(|f| !matches!(f, anicraft_engine::doc::Paint::Bitmap { .. }))),
+        "modify.soften_fill_edges" => {
+            selected_shape(app, |sh| sh.fill.as_ref().is_some_and(|f| !matches!(f, anicraft_engine::doc::Paint::Bitmap { .. })))
+        }
         // Convert Audio to Keyframes and Auto Lip-Sync read a sound on this timeline (ADR 0114).
         "sound.to_keyframes" | "sound.lip_sync" => app.s.timeline().layers.iter().any(|l| l.has_sounds()),
         // Data bindings (ADR 0118): one instance and a table to bind; bindings to remove or bake.
@@ -477,7 +507,9 @@ fn enabled(app: &App, id: &str) -> bool {
         // Groups and Combine Objects (ADR 0073).
         "modify.group" => !app.s.selection.is_empty(),
         "modify.ungroup" => app.s.selected_elements().iter().any(|(_, e)| matches!(e.kind, anicraft_engine::doc::ElementKind::Group { .. })),
-        "modify.union" | "modify.intersect" | "modify.punch" | "modify.crop" => app.s.selected_elements().iter().filter(|(_, e)| matches!(e.kind, anicraft_engine::doc::ElementKind::Shape(_))).count() >= 2,
+        "modify.union" | "modify.intersect" | "modify.punch" | "modify.crop" => {
+            app.s.selected_elements().iter().filter(|(_, e)| matches!(e.kind, anicraft_engine::doc::ElementKind::Shape(_))).count() >= 2
+        }
         "scene.prev" | "scene.move_up" => app.s.scene > 0,
         "view.guides_clear" => !app.s.guides().is_empty(),
         "scene.next" | "scene.move_down" => app.s.scene + 1 < app.s.doc.scenes.len(),
@@ -488,10 +520,14 @@ fn enabled(app: &App, id: &str) -> bool {
         },
         "timeline.paste_frames" => !app.s.frame_clipboard.is_empty(),
         "tween.add_hint" => app.s.active_layer().and_then(|l| l.hint_tween_at(app.s.frame)).is_some(),
-        "tween.clear_hints" => app.s.active_layer().and_then(|l| l.hint_tween_at(app.s.frame).and_then(|(i, _)| l.keyframes.get(i))).is_some_and(|k| !k.hints.is_empty()),
+        "tween.clear_hints" => {
+            app.s.active_layer().and_then(|l| l.hint_tween_at(app.s.frame).and_then(|(i, _)| l.keyframes.get(i))).is_some_and(|k| !k.hints.is_empty())
+        }
         // With no frame selection it removes the frame at the playhead on every layer.
         "timeline.remove_frame" if app.frame_sel.is_none() => app.s.timeline().layers.iter().any(|l| l.end_frame() > app.s.frame),
-        "timeline.remove_frame" | "timeline.create_tween" | "timeline.create_shape_tween" => app.s.active_layer().is_some_and(|l| l.keyframe_at(app.s.frame).is_some()),
+        "timeline.remove_frame" | "timeline.create_tween" | "timeline.create_shape_tween" => {
+            app.s.active_layer().is_some_and(|l| l.keyframe_at(app.s.frame).is_some())
+        }
         _ => true,
     }
 }
@@ -508,6 +544,7 @@ fn checked(app: &App, id: &str) -> Option<bool> {
         "draw.object_drawing" => Some(app.s.style.object_drawing),
         // Rulers, grid and guides (ADR 0076).
         "view.rulers" => Some(app.s.aids.rulers),
+        "view.hide_edges" => Some(app.s.aids.hide_edges),
         "view.grid_show" => Some(app.s.aids.show_grid),
         "view.grid_snap" => Some(app.s.aids.snap_grid),
         "view.guides_show" => Some(app.s.aids.show_guides),
@@ -520,21 +557,41 @@ fn checked(app: &App, id: &str) -> Option<bool> {
 
 fn item(app: &mut App, ui: &mut egui::Ui, spec: &CommandSpec) {
     let label = match spec.id {
-        "edit.undo" => app.s.undo_label().map_or_else(|| crate::i18n::t_cmd(spec.id, spec.label).to_string(), |l| tr!("Undo {action}", action = crate::i18n::t_dyn(l))),
+        "edit.undo" => app
+            .s
+            .undo_label()
+            .map_or_else(|| crate::i18n::t_cmd(spec.id, spec.label).to_string(), |l| tr!("Undo {action}", action = crate::i18n::t_dyn(l))),
         _ => crate::i18n::t_cmd(spec.id, spec.label).to_string(),
     };
     // Settings show whether they are on, as check items do.
-    let logical = match checked(app, spec.id) {
+    let on = checked(app, spec.id);
+    let name = label.clone();
+    let logical = match on {
         Some(true) => format!("✔ {label}"),
         Some(false) => format!("   {label}"),
         None => label,
     };
     let visual = i18n::display(&logical);
-    let button = egui::Button::new(visual.as_ref()).shortcut_text(text(Type::Key, platform::shortcut_label(app.keymap.primary(spec.id).unwrap_or(""))));
+    let button =
+        egui::Button::new(visual.as_ref()).shortcut_text(text(Type::Key, platform::shortcut_label(app.keymap.primary(spec.id).unwrap_or(""))));
     // What this build can't do stays in its usual place, dimmed, saying why (the web build).
     let missing = platform::unavailable(spec.id);
     let r = ui.add_enabled(enabled(app, spec.id) && missing.is_none(), button);
-    r.set_name(&logical);
+    // A setting is a check item to a screen reader too: its name without the tick drawn for
+    // the eye, and whether it is on (every toggling command, not one of them).
+    if let Some(on) = on {
+        use egui::accesskit::{Role, Toggled};
+        ui.ctx().accesskit_node_builder(r.id, |node| {
+            node.set_role(Role::MenuItemCheckBox);
+            node.set_label(name);
+            node.set_toggled(if on { Toggled::True } else { Toggled::False });
+            if let Some(key) = app.keymap.primary(spec.id) {
+                node.set_keyboard_shortcut(platform::shortcut_label(key));
+            }
+        });
+    } else {
+        r.set_name(&logical);
+    }
     let r = match missing {
         Some(why) => r.on_disabled_hover_text(crate::i18n::t(why)),
         None => r,
@@ -679,19 +736,18 @@ pub(crate) fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &
         "View" => {
             let canvas = app.stage_cache.canvas;
             let center = canvas.center();
+            let ppp = ui.ctx().pixels_per_point();
             if ui_item(ui, tr!("Zoom In"), "Ctrl+=", None) {
-                let z = app.view.zoom * 1.5;
-                app.zoom_about(canvas, center, z);
+                app.zoom_by(canvas, center, 1.5, ppp);
             }
             if ui_item(ui, tr!("Zoom Out"), "Ctrl+-", None) {
-                let z = app.view.zoom / 1.5;
-                app.zoom_about(canvas, center, z);
+                app.zoom_by(canvas, center, 1.0 / 1.5, ppp);
             }
             if ui_item(ui, tr!("Fit in Window"), "Ctrl+0", None) {
                 app.view.fit = true;
             }
             if ui_item(ui, "100%", "Ctrl+1", None) {
-                app.zoom_about(canvas, center, 1.0);
+                app.zoom_about(canvas, center, 1.0 / ppp, ppp);
             }
             ui.separator();
             if ui_item(ui, tr!("Onion Skin"), app.keymap.primary("view.onion").unwrap_or(""), Some(app.onion.ghosts)) {
@@ -772,7 +828,13 @@ pub(crate) fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &
                 }
                 ui.separator();
                 if ui_item(ui, tr!("Save Workspace…"), "", None) {
-                    app.prompt = Some(crate::app::Prompt { title: tr_noop!("Save Workspace"), cmd: "view.save_workspace", key: "name", text: String::new(), focus: true });
+                    app.prompt = Some(crate::app::Prompt {
+                        title: tr_noop!("Save Workspace"),
+                        cmd: "view.save_workspace",
+                        key: "name",
+                        text: String::new(),
+                        focus: true,
+                    });
                 }
                 if ui_item(ui, tr!("Manage Workspaces…"), "", None) {
                     crate::workspaces_window::open(app);
@@ -857,7 +919,10 @@ pub(crate) fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &
             if ui_item(ui, tr!("About AniCraft"), "", None) {
                 app.show_about = true;
             }
-            ui.label(text(Type::Caption, trn!("{n} command is scriptable with anicraft-cli", "{n} commands are scriptable with anicraft-cli", cmds.len())));
+            ui.label(text(
+                Type::Caption,
+                trn!("{n} command is scriptable with anicraft-cli", "{n} commands are scriptable with anicraft-cli", cmds.len()),
+            ));
         }
         _ => {}
     }
@@ -869,11 +934,7 @@ mod tests {
 
     #[test]
     fn menu_step_respects_visual_row_direction() {
-        let mut keys = MenuKeys {
-            tops: (0..9).map(|i| egui::Id::new(("menu_top", i))).collect(),
-            rtl: false,
-            ..Default::default()
-        };
+        let mut keys = MenuKeys { tops: (0..9).map(|i| egui::Id::unique(("menu_top", i))).collect(), rtl: false, ..Default::default() };
         // LTR: File(0) is on the left, Edit(1) is to its right, View(2) is farther right.
         assert_eq!(keys.step(1, true), 2);
         assert_eq!(keys.step(1, false), 0);

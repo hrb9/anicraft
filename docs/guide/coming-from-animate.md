@@ -90,6 +90,7 @@ Asset Warp, the Paint Brush and Fluid Brush, Deco and the Spray Brush. More on t
 | Import to Stage | **Ctrl+R** | File › Import › Import to Stage… |
 | Edit symbols | **Ctrl+E** | Edit › Edit Symbols |
 | Break apart | **Ctrl+B** | Modify › Break Apart |
+| Distribute to layers | **Ctrl+Shift+D** | Modify › Timeline › Distribute to Layers |
 | Duplicate | **Ctrl+D** | Edit › Duplicate |
 | Paste in place | **Ctrl+Shift+V** | Edit › Paste in Place |
 | Deselect all | **Ctrl+Shift+A** | Edit › Deselect All |
@@ -183,7 +184,7 @@ ActionScript 1.0 and 2.0, and scripts placed on instances. See [Interactivity](i
 ### Files, Test Movie and publishing
 
 * AniCraft saves `.anicraft` documents, an open, documented format. It **opens** `.fla`, `.xfl`
-  and XFL folders, as new, untitled documents, but can't save back to them. See
+  and XFL folders, as new documents named after the file, but can't save back to them. See
   [Opening Animate files](opening-animate-files.md).
 * There is **no SWF** export. For the web, **Export HTML Canvas** writes one page that plays the
   movie, buttons and scripts in any browser. Video (with your own ffmpeg), GIF, animated PNG and

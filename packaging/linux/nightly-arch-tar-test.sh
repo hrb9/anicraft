@@ -30,7 +30,7 @@ bash "$HERE/nightly-arch-tar.sh" "$stage" "$work/stage" "$dst" "$base"
 tar -xzf "$dst/$base.tar.gz" -C "$work/extract"
 pack="$work/extract/$base"
 # The launcher is the shared one, byte for byte, and the real program hides beside it.
-cmp "$HERE/nightly-launch.sh" "$pack/bin/anicraft"
+cmp "$HERE/nightly-package-launch.sh" "$pack/bin/anicraft"
 bash -n "$pack/bin/anicraft"
 # Simulate the existing Arch bin-tree copy and public launcher rename.
 mkdir -p "$work/installed"

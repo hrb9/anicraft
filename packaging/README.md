@@ -46,9 +46,11 @@ their required fields once they exist.
 
 The preview channel the ArtCraft Launcher installs beside stable AniCraft has its own scripts,
 which the stable ones never source: `nightly-common.sh` (the four `ANICRAFT_*` values and the
-frozen, clean tree), `linux/nightly.sh` with `linux/nightly-launch.sh` (the one launcher every
-Linux nightly format installs; the plain tar is the standard layout, `anicraft` the launcher and
-`anicraft-bin` the GUI it starts), `macos/nightly.{sh,sh-sign,sh-verify}` with
+frozen, clean tree), `linux/nightly.sh` with `linux/nightly-launch.sh` (the plain nightly tar's
+launcher: craft-common-actions's canonical template, rendered for this app; `anicraft` is the
+launcher and `anicraft-bin` the GUI beside it) and `linux/nightly-package-launch.sh` (the launcher
+the deb/rpm, AppImage, Arch handoff and Flatpak install, with their own profile folder),
+`macos/nightly.{sh,sh-sign,sh-verify}` with
 `macos/nightly-lib.sh` and `macos/nightly_plist.py`, and `windows/nightly.ps1` behind
 `windows/package.ps1 -Nightly -BuildOnly`. Every artifact is GUI only: no `anicraft-cli`, portable
 marker, `.desktop`, DMG, association or URL type. Signing is the trusted step's

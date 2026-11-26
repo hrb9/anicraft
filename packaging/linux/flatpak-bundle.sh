@@ -85,8 +85,8 @@ if [[ "$FLATPAK_ID" != "$APP_ID" ]]; then
   install -Dm644 "$NIGHTLY_ICON" \
     "$WORK/stage/share/icons/hicolor/256x256/apps/$FLATPAK_ID.png"
   # The sandbox keeps its own home, but the program still needs the flavor's profile protocol: the
-  # bundle runs the same launcher every other format installs (packaging/linux/nightly-launch.sh).
-  install -Dm755 "$HERE/nightly-launch.sh" "$WORK/stage/bin/anicraft-nightly"
+  # bundle runs the same launcher every distro format installs (packaging/linux/nightly-package-launch.sh).
+  install -Dm755 "$HERE/nightly-package-launch.sh" "$WORK/stage/bin/anicraft-nightly"
   # The sandbox installs the GUI as `anicraft-bin`, the name the launcher looks for: a stable
   # program called `anicraft` is never a candidate, in the sandbox or anywhere else.
   sed -e "s|ai\.storyteller\.anicraft|$FLATPAK_ID|g" \

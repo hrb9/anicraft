@@ -149,10 +149,10 @@ if has deb || has rpm; then
     rm -rf "$NFPM_STAGE"
     cp -R "$STAGE" "$NFPM_STAGE"
     install -Dm755 "$NFPM_STAGE/usr/bin/anicraft" "$NFPM_STAGE/usr/lib/anicraft-nightly/anicraft"
-    # The shared nightly launcher (packaging/linux/nightly-launch.sh): the real program in
+    # The nightly package launcher (packaging/linux/nightly-package-launch.sh): the real program in
     # usr/lib/anicraft-nightly, started with --launch-profile nightly-v1 --profile-root <its own
     # profile> -- <arguments>, so no format can start it without a private profile.
-    install -Dm755 "$HERE/nightly-launch.sh" "$NFPM_STAGE/usr/bin/$NFPM_BIN"
+    install -Dm755 "$HERE/nightly-package-launch.sh" "$NFPM_STAGE/usr/bin/$NFPM_BIN"
     rm -f "$NFPM_STAGE/usr/bin/anicraft"
     install -Dm755 "$NFPM_STAGE/usr/bin/anicraft-cli" "$NFPM_STAGE/usr/lib/anicraft-nightly/anicraft-cli"
     cat >"$NFPM_STAGE/usr/bin/$NFPM_CLI" <<'CLI_WRAPPER'
@@ -212,7 +212,7 @@ if has appimage; then
     APPIMAGE_ID="$APP_ID.nightly-v1"
     # AppRun is the shared launcher (not a symlink): from $APPDIR it finds usr/bin/anicraft and
     # starts it with the flavor's protocol and a profile of its own.
-    install -Dm755 "$HERE/nightly-launch.sh" "$APPDIR/AppRun"
+    install -Dm755 "$HERE/nightly-package-launch.sh" "$APPDIR/AppRun"
     sed -e "s|^Icon=$APP_ID$|Icon=$APPIMAGE_ID|" \
         -e "s|^Name=AniCraft$|Name=AniCraft Nightly|" \
         -e '/^MimeType=/d' \

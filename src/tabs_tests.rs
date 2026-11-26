@@ -84,6 +84,51 @@ fn the_first_document_opened_takes_the_samples_place_and_the_next_gets_a_tab() {
     assert_eq!(app.tabs.len(), 2);
 }
 
+/// ADR 0009: an imported Animate file's tab and the window are named after it and marked as
+/// imported, while it stays untitled: Save As offers an `.anicraft` beside the original, opening
+/// the same file again shows its tab, and once saved it is the `.anicraft` document.
+#[test]
+fn an_import_is_named_after_its_animate_file_until_it_is_saved() {
+    let (ctx, mut app) = app();
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/xfl/tests/corpus");
+    let folder = corpus.join("primitives");
+    app.request("file.open", json!({"path": folder.display().to_string()}));
+    settle(&ctx, &mut app);
+    assert!(app.s.path.is_none(), "still untitled: Save never writes over the Animate file");
+    assert_eq!(names(&app), ["primitives"]);
+    let t = &infos(&app)[0];
+    assert_eq!(t.imported.as_deref(), Some(folder.as_path()));
+    assert_eq!(spoken(t), "primitives, imported");
+    assert_eq!(window_title(&app), "AniCraft — primitives (imported)");
+    assert_eq!(app.save_suggestion(), corpus.join("primitives.anicraft").display().to_string(), "beside the XFL folder");
+    // Reached through "..", it is still named after its folder.
+    let (_, mut other) = self::app();
+    other.request("file.open", json!({"path": folder.join("golden").join("..").display().to_string()}));
+    assert_eq!(names(&other), ["primitives"]);
+    // A new document is "Untitled": the import has a name of its own.
+    app.request("file.new", json!({}));
+    assert_eq!(names(&app), ["primitives", "Untitled"]);
+    assert_eq!(window_title(&app), "AniCraft — Untitled");
+    // Opening the same Animate file again shows its tab instead of importing it twice, and so
+    // does the .xfl in its folder: they are one document.
+    app.request("file.open", json!({"path": folder.display().to_string()}));
+    assert_eq!((app.tabs.len(), app.tabs.active()), (2, 0));
+    app.request("file.new", json!({}));
+    app.request("file.open", json!({"path": folder.join("primitives.xfl").display().to_string()}));
+    assert_eq!((app.tabs.len(), app.tabs.active()), (3, 0), "the .xfl shows the folder's tab");
+    assert_eq!(names(&app), ["primitives", "Untitled", "Untitled 2"]);
+    // Saved, it is the .anicraft document, no longer marked.
+    let dir = std::env::temp_dir().join(format!("anicraft-tabs-import-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let saved = dir.join("primitives.anicraft");
+    app.run("file.save", json!({"path": saved.display().to_string(), "confirm": true}));
+    assert_eq!(names(&app), ["primitives.anicraft", "Untitled", "Untitled 2"]);
+    assert!(infos(&app)[0].imported.is_none());
+    assert_eq!(window_title(&app), "AniCraft — primitives.anicraft");
+    assert_eq!(app.save_suggestion(), saved.display().to_string());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn switching_keeps_each_documents_undo_selection_playhead_and_view() {
     let (ctx, mut app) = app();

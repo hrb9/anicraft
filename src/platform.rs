@@ -1064,8 +1064,8 @@ pub fn filters(cmd: &str) -> (&'static str, &'static [&'static str]) {
         "file.export_svg" => (tr_noop!("SVG image"), &["svg"]),
         "file.export_lottie" => (tr_noop!("Lottie animation"), &["json"]),
         "file.export_html" => (tr_noop!("Web page"), &["html", "htm"]),
-        "file.import" => (tr_noop!("Drawing, image or sound"), &["svg", "png", "jpg", "jpeg", "wav", "ogg", "mp3"]),
-        "file.import_to_library" => (tr_noop!("Sound, image or drawing"), &["wav", "ogg", "mp3", "png", "jpg", "jpeg", "svg"]),
+        "file.import" => (tr_noop!("Drawing, image or sound"), &["svg", "png", "jpg", "jpeg", "wav", "wave", "ogg", "oga", "mp3"]),
+        "file.import_to_library" => (tr_noop!("Sound, image or drawing"), &["wav", "wave", "ogg", "oga", "mp3", "png", "jpg", "jpeg", "svg"]),
         "file.export_audio" => (tr_noop!("WAV sound"), &["wav"]),
         "file.export_sprite_sheet" => (tr_noop!("PNG sprite sheet"), &["png"]),
         "file.export_video" => (tr_noop!("Video (WebM or MP4)"), &["webm", "mp4"]),
@@ -1089,6 +1089,18 @@ pub fn reads_file(cmd: &str) -> bool {
     matches!(cmd, "file.open" | "plugin.install" | "file.import" | "file.import_video" | "layer.set_video" | "file.import_to_library" | "brush.preset_import" | "filter.preset_import" | "swatch.import" | "data.import_table" | "macro.run" | "macro.import")
 }
 
+/// A save dialog's suggestion split into the folder it opens in and the name in its field: a
+/// full path ("/art/walk.anicraft", the file the document has or, for an import, beside the
+/// Animate file) opens in its folder when that exists; a bare name opens wherever the platform
+/// last did.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn split_suggestion(default_name: &str) -> (Option<PathBuf>, String) {
+    let path = std::path::Path::new(default_name);
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty() && d.is_dir()).map(std::path::Path::to_path_buf);
+    let name = path.file_name().map_or_else(|| default_name.to_string(), |n| n.to_string_lossy().into_owned());
+    (dir, name)
+}
+
 /// Shows the platform's own dialog (Windows common dialog, macOS panel, Linux XDG portal), with
 /// `title` already in the interface language. `None` when cancelled.
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "macos")))]
@@ -1098,7 +1110,15 @@ pub fn file_dialog(cmd: &str, title: &str, default_name: &str) -> Option<PathBuf
     match cmd {
         c if reads_file(c) => d.add_filter(label, exts).pick_file(),
         "file.export_png_sequence" | "file.export_svg_sequence" => d.pick_folder(),
-        _ => d.add_filter(label, exts).set_file_name(default_name).save_file(),
+        _ => {
+            let (dir, name) = split_suggestion(default_name);
+            let d = d.add_filter(label, exts).set_file_name(name);
+            match dir {
+                Some(dir) => d.set_directory(dir),
+                None => d,
+            }
+            .save_file()
+        }
     }
 }
 
@@ -1139,7 +1159,15 @@ pub fn start_file_dialog(cmd: &str, title: &str, default_name: &str, window: &ef
         let answer: Answer = match cmd {
             c if reads_file(c) => Box::pin(d.add_filter(label, exts).pick_file()),
             "file.export_png_sequence" | "file.export_svg_sequence" => Box::pin(d.pick_folder()),
-            _ => Box::pin(d.add_filter(label, exts).set_file_name(default_name).save_file()),
+            _ => {
+                let (dir, name) = split_suggestion(default_name);
+                let d = d.add_filter(label, exts).set_file_name(name);
+                Box::pin(match dir {
+                    Some(dir) => d.set_directory(dir),
+                    None => d,
+                }
+                .save_file())
+            }
         };
         let _ = sheet_tx.send(answer);
     }
@@ -1371,10 +1399,37 @@ mod tests {
         assert_eq!(menu_inset(), 0.0);
     }
 
+    /// A save dialog opens in the suggested file's folder with only its name in the field
+    /// (ADR 0009: an import's `.anicraft` goes beside the Animate file).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_save_suggestion_opens_in_its_folder_with_its_name() {
+        let dir = std::env::temp_dir();
+        let full = dir.join("walk.anicraft");
+        assert_eq!(split_suggestion(&full.display().to_string()), (Some(dir.clone()), "walk.anicraft".to_string()));
+        assert_eq!(split_suggestion("animation.anicraft"), (None, "animation.anicraft".to_string()), "a bare name: the platform picks the folder");
+        let gone = dir.join("anicraft-no-such-folder-here").join("walk.anicraft");
+        assert_eq!(split_suggestion(&gone.display().to_string()).0, None, "a folder that isn't there is not offered");
+    }
+
     #[test]
     fn the_desktop_runs_every_command() {
         assert!(anicraft_engine::commands().iter().all(|c| unavailable(c.id).is_none()));
         assert!(reads_file("file.open") && reads_file("file.import") && !reads_file("file.save"));
+    }
+
+    /// The pickers show a sound exactly when the importer reads it: a name it reads but the
+    /// picker hides (`.wave` and `.oga` were) can't be chosen, and one it shows but can't read
+    /// fails after the choice.
+    #[test]
+    fn import_filters_include_supported_sound_aliases() {
+        for cmd in ["file.import", "file.import_to_library"] {
+            let (_, extensions) = filters(cmd);
+            for ext in ["wav", "wave", "ogg", "oga", "vorbis", "mp3", "aif", "flac", "m4a"] {
+                let read = anicraft_engine::cmds_sound::is_sound(Path::new(&format!("take.{ext}")));
+                assert_eq!(extensions.contains(&ext), read, "{cmd} and .{ext}");
+            }
+        }
     }
 
     #[test]

@@ -17,8 +17,8 @@ mkdir "$stage/bin/.anicraft-nightly"
 mv "$stage/bin/anicraft" "$stage/bin/.anicraft-nightly/anicraft"
 # The launcher every Nightly format installs: it starts the real program with
 # --launch-profile nightly-v1 --profile-root <its own profile> -- <arguments>
-# (packaging/linux/nightly-launch.sh).
-cp "$here/nightly-launch.sh" "$stage/bin/anicraft"
+# (packaging/linux/nightly-package-launch.sh).
+cp "$here/nightly-package-launch.sh" "$stage/bin/anicraft"
 chmod 755 "$stage/bin/anicraft"
 
 # The packager ships bin/ and share/ as they are, so Arch Nightly must not land on stable's

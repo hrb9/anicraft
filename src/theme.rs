@@ -1070,6 +1070,14 @@ pub fn row_layout() -> egui::Layout {
     if crate::i18n::is_rtl() { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) }
 }
 
+/// Single-row horizontal layout matching the active language direction.
+/// Mirrors [`egui::Ui::horizontal`] by constraining the row's initial height to
+/// `interact_size.y` so `Align::Center` does not stretch across a panel or scroll area.
+pub fn horizontal_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    let initial_size = egui::vec2(ui.available_size_before_wrap().x, ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(initial_size, row_layout(), add)
+}
+
 /// A menu title with its access key underlined (ADR 0064), as Windows and Linux show it while
 /// Alt is held or the menu bar has the keyboard. `at`: the character (not byte) to underline.
 pub fn access_key_label(s: &str, at: Option<usize>) -> egui::text::LayoutJob {
@@ -1246,7 +1254,7 @@ pub fn wrapped_label_with_sense(ui: &mut egui::Ui, role: Type, col: Color32, sen
     let total_h = galleys.iter().map(|g| g.rect.height().max(line_height)).sum::<f32>().max(line_height);
     let alloc_w = max_w.max(1.0);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(alloc_w, total_h), sense);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), logical));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), logical));
     let mut y = rect.top();
     for g in galleys {
         let h = g.rect.height().max(line_height);
@@ -1375,7 +1383,7 @@ pub const FORM_LABEL_DOCK: f32 = 78.0;
 /// controls' width beside the label is remembered per row, so the choice holds steady while the
 /// panel is resized; a change of choice redraws the frame at once.
 pub fn form_row<R>(ui: &mut egui::Ui, label_w: f32, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let id = ui.id().with(("form_row", label));
+    let id = ui.scope_id().with(("form_row", label));
     let avail = ui.available_width();
     let gap = ui.spacing().item_spacing.x;
     let need: Option<f32> = ui.data(|d| d.get_temp(id));
@@ -1384,19 +1392,18 @@ pub fn form_row<R>(ui: &mut egui::Ui, label_w: f32, label: &str, add: impl FnOnc
         return ui.horizontal_wrapped(add).inner;
     }
     let rtl = crate::i18n::is_rtl();
-    let (r, used) = ui
-        .with_layout(row_layout(), |ui| {
-            ui.allocate_ui_with_layout(egui::vec2(label_w, TARGET), row_layout(), |ui| {
-                ui.set_min_size(egui::vec2(label_w, TARGET));
-                ui.set_max_width(label_w);
-                wrapped_label(ui, Type::Label, label);
-            });
-            let start = if rtl { ui.cursor().right() } else { ui.cursor().left() };
-            let r = add(ui);
-            let span = if rtl { start - ui.min_rect().left() } else { ui.min_rect().right() - start };
-            (r, span)
-        })
-        .inner;
+    let (r, used) = horizontal_row(ui, |ui| {
+        ui.allocate_ui_with_layout(egui::vec2(label_w, TARGET), row_layout(), |ui| {
+            ui.set_min_size(egui::vec2(label_w, TARGET));
+            ui.set_max_width(label_w);
+            wrapped_label(ui, Type::Label, label);
+        });
+        let start = if rtl { ui.cursor().right() } else { ui.cursor().left() };
+        let r = add(ui);
+        let span = if rtl { start - ui.min_rect().left() } else { ui.min_rect().right() - start };
+        (r, span)
+    })
+    .inner;
     if need.is_none_or(|n| (n - used).abs() > 0.5) {
         ui.data_mut(|d| d.insert_temp(id, used));
         if label_w + gap + used > avail + 0.5 {
@@ -1410,7 +1417,7 @@ pub fn form_row<R>(ui: &mut egui::Ui, label_w: f32, label: &str, add: impl FnOnc
 /// control column, wrapping within it, never back at the label column.
 pub fn form_note(ui: &mut egui::Ui, label_w: f32, note: impl StyledText) {
     let (wt, meta) = note.into_styled();
-    ui.with_layout(row_layout(), |ui| {
+    horizontal_row(ui, |ui| {
         // A row puts one item spacing between its label column and the controls.
         ui.add_space(label_w + ui.spacing().item_spacing.x);
         match meta {
@@ -1467,7 +1474,7 @@ pub fn section_with_header<R>(
         ui.data_mut(|d| d.insert_temp(key, open));
     }
     let enabled = ui.is_enabled();
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, enabled, open, title));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::DisclosureTriangle, enabled, open, title));
     let rtl = crate::i18n::is_rtl();
     let p = ui.painter();
     let hot = resp.hovered() || resp.has_focus();

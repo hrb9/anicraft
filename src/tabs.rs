@@ -19,7 +19,7 @@ use crate::platform;
 use crate::theme::{self, T, Type, font};
 use anicraft_engine::Session;
 use anicraft_engine::doc::{Document, ElementId, LayerId};
-use egui::{Id, Rect, Sense, Stroke, StrokeKind, WidgetType, pos2, vec2};
+use egui::{Id, Rect, Sense, Stroke, StrokeKind, Role, pos2, vec2};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -59,7 +59,7 @@ macro_rules! doc_view {
 }
 
 doc_view! { app;
-    view: StageView = StageView { zoom: 1.0, pan: egui::Vec2::ZERO, fit: true, fitted: None, clip_to_stage: app.view.clip_to_stage },
+    view: StageView = StageView { zoom: 1.0, pixels_per_point: None, pan: egui::Vec2::ZERO, fit: true, fitted: None, clip_to_stage: app.view.clip_to_stage },
     camera_preview: bool = false,
     tl_scroll: f32 = 0.0,
     tl_cell_w: f32 = crate::timeline::CELL_DEFAULT,
@@ -119,6 +119,9 @@ pub struct TabInfo {
     pub name: String,
     pub dirty: bool,
     pub path: Option<PathBuf>,
+    /// The Animate file an unsaved import came from (ADR 0009): the tab is named after it and
+    /// marked "Imported".
+    pub imported: Option<PathBuf>,
     pub active: bool,
 }
 
@@ -200,9 +203,13 @@ impl Tabs {
     }
 }
 
-/// A document's name on its tab: the file's, or "Untitled" (numbered from the second on).
-fn name_of(untitled: u32, path: Option<&Path>) -> String {
-    match path.and_then(Path::file_name) {
+/// A document's name on its tab: the file's, the Animate file's it was imported from (ADR 0009),
+/// or "Untitled" (numbered from the second on).
+fn name_of(untitled: u32, s: &Session) -> String {
+    // An import is named after what was opened, or after its folder when that path has no
+    // name of its own ("walk/sub/..").
+    let imported = s.imported.as_ref().and_then(|i| i.source.file_name().or_else(|| i.package.file_name()));
+    match s.path.as_deref().and_then(Path::file_name).or(imported) {
         Some(n) => n.to_string_lossy().into_owned(),
         None if untitled <= 1 => tr!("Untitled").to_string(),
         None => tr!("Untitled {n}", n = untitled),
@@ -219,7 +226,8 @@ fn session(app: &App, i: usize) -> Option<&Session> {
 pub fn info(app: &App, i: usize) -> Option<TabInfo> {
     let slot = app.tabs.slots.get(i)?;
     let s = session(app, i)?;
-    Some(TabInfo { id: slot.id, name: name_of(slot.untitled, s.path.as_deref()), dirty: s.is_dirty(), path: s.path.clone(), active: i == app.tabs.active })
+    let imported = if s.path.is_none() { s.imported.as_ref().map(|i| i.source.clone()) } else { None };
+    Some(TabInfo { id: slot.id, name: name_of(slot.untitled, s), dirty: s.is_dirty(), path: s.path.clone(), imported, active: i == app.tabs.active })
 }
 
 /// Every tab, in the bar's order.
@@ -230,6 +238,17 @@ pub fn infos(app: &App) -> Vec<TabInfo> {
 /// The shown document's name, as its tab has it (the window title and the close question).
 pub fn active_name(app: &App) -> String {
     info(app, app.tabs.active).map_or_else(|| tr!("Untitled").to_string(), |t| t.name)
+}
+
+/// The window's title for the shown document: its name, marked when it is an unsaved import
+/// (ADR 0009), and a dot while it has unsaved changes.
+pub fn window_title(app: &App) -> String {
+    let name = match info(app, app.tabs.active) {
+        Some(t) if t.imported.is_some() => tr!("{name} (imported)", name = t.name),
+        Some(t) => t.name,
+        None => tr!("Untitled").to_string(),
+    };
+    format!("AniCraft — {name}{}", if app.s.is_dirty() { " •" } else { "" }) // i18n-exempt: the product name and the document's
 }
 
 /// Whether any open document has unsaved changes.
@@ -406,7 +425,17 @@ fn already_open(app: &App, id: &str, params: &Value) -> Option<usize> {
         },
         _ => return None,
     };
-    (0..app.tabs.len()).find(|i| session(app, *i).and_then(|s| s.path.as_deref()).is_some_and(|p| same_file(p, &path)))
+    // An unsaved import of the same Animate document counts too, whether its XFL folder or the
+    // .xfl in it was opened. Not in a browser: an upload is known only by its name there, and
+    // two different files may share one.
+    let package = anicraft_engine::import_package(&path);
+    (0..app.tabs.len()).find(|i| {
+        session(app, *i).is_some_and(|s| match (&s.path, &s.imported) {
+            (Some(p), _) => same_file(p, &path),
+            (None, Some(import)) => !platform::WEB && same_file(&import.package, &package),
+            (None, None) => false,
+        })
+    })
 }
 
 /// The shown document is the one the app started with, untouched: what is opened takes its
@@ -447,7 +476,7 @@ pub fn open(app: &mut App, id: &str, params: Value) -> Option<Value> {
     let id_new = app.tabs.next_id;
     app.tabs.next_id += 1;
     // The lowest number no open document without a file has.
-    let taken: Vec<u32> = (0..app.tabs.len()).filter(|i| session(app, *i).is_some_and(|s| s.path.is_none())).filter_map(|i| app.tabs.slots.get(i).map(|s| s.untitled)).collect();
+    let taken: Vec<u32> = (0..app.tabs.len()).filter(|i| session(app, *i).is_some_and(|s| s.path.is_none() && s.imported.is_none())).filter_map(|i| app.tabs.slots.get(i).map(|s| s.untitled)).collect();
     let untitled = (1..=MAX_TABS as u32 + 1).find(|n| !taken.contains(n)).unwrap_or(1);
     let parked = Parked { s: Session::new(Document::default()), view: DocView::fresh(app), saver: app.recovery.for_new_document() };
     app.tabs.slots.push(Slot { id: id_new, untitled, placeholder: false, parked: Some(Box::new(parked)) });
@@ -685,8 +714,22 @@ fn elided(p: &egui::Painter, name: &str, width: f32) -> std::sync::Arc<egui::Gal
 
 /// What a screen reader says for a tab.
 fn spoken(t: &TabInfo) -> String {
-    if t.dirty { tr!("{name}, unsaved changes", name = t.name) } else { t.name.clone() }
+    match (t.imported.is_some(), t.dirty) {
+        (true, true) => tr!("{name}, imported, unsaved changes", name = t.name),
+        (true, false) => tr!("{name}, imported", name = t.name),
+        (false, true) => tr!("{name}, unsaved changes", name = t.name),
+        (false, false) => t.name.clone(),
+    }
 }
+
+/// The dim "Imported" after an unsaved import's name (ADR 0009). It never shortens: the name
+/// gives way first.
+fn imported_tag(p: &egui::Painter) -> std::sync::Arc<egui::Galley> {
+    p.layout_no_wrap(tr!("Imported").to_string(), font(Type::Caption), T.text_dim)
+}
+
+/// The gap between a name and its "Imported".
+const TAG_GAP: f32 = 6.0;
 
 /// The document tabs, above the edit bar: one per open document, with a dot while it has
 /// unsaved changes and a button to close it. Click shows a document, middle click closes it,
@@ -696,7 +739,11 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
     let full = ui.max_rect();
     let mut acts: Vec<Act> = Vec::new();
     // How wide each tab is: its name, within limits; all a little narrower when they don't fit.
-    let natural: Vec<f32> = tabs.iter().map(|t| (elided(ui.painter(), &t.name, TAB_MAX).rect.width() + 2.0 * PAD + CLOSE_W + DOT_W).clamp(TAB_MIN, TAB_MAX)).collect();
+    let tag_w = imported_tag(ui.painter()).rect.width() + TAG_GAP;
+    let natural: Vec<f32> = tabs
+        .iter()
+        .map(|t| (elided(ui.painter(), &t.name, TAB_MAX).rect.width() + if t.imported.is_some() { tag_w } else { 0.0 } + 2.0 * PAD + CLOSE_W + DOT_W).clamp(TAB_MIN, TAB_MAX))
+        .collect();
     let wanted: f32 = natural.iter().sum();
     let shrink = if wanted > full.width() && wanted > 0.0 { (full.width() / wanted).max(TAB_MIN / TAB_MAX) } else { 1.0 };
     let widths: Vec<f32> = natural.iter().map(|w| (w * shrink).max(TAB_MIN.min(*w))).collect();
@@ -732,16 +779,16 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
             if shown.width() <= 0.0 {
                 continue;
             }
-            let resp = ui.interact(shown, Id::new(("document_tab", t.id)), Sense::click_and_drag());
+            let resp = ui.interact(shown, Id::unique(("document_tab", t.id)), Sense::click_and_drag());
             let said = spoken(t);
-            resp.widget_info(|| egui::WidgetInfo::selected(WidgetType::SelectableLabel, true, t.active, &said));
+            resp.widget_info(|| egui::WidgetInfo::selected(Role::Button, true, t.active, &said));
             ui.ctx().accesskit_node_builder(resp.id, |node| {
                 node.set_role(egui::accesskit::Role::Tab);
                 node.set_selected(t.active);
             });
             let close_r = Rect::from_center_size(pos2(r.right() - PAD * 0.5 - CLOSE_W * 0.5, r.center().y), vec2(CLOSE_W - 4.0, CLOSE_W - 4.0));
-            let close = ui.interact(close_r.intersect(full), Id::new(("document_tab_close", t.id)), Sense::click());
-            a11y::control(ui, &close, WidgetType::Button, &tr!("Close {name}", name = t.name), None);
+            let close = ui.interact(close_r.intersect(full), Id::unique(("document_tab_close", t.id)), Sense::click());
+            a11y::control(ui, &close, Role::Button, &tr!("Close {name}", name = t.name), None);
             // The tab: the shown one joins the edit bar below it.
             let p = ui.painter();
             if t.active {
@@ -757,9 +804,15 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
                 p.circle_filled(pos2(left + 3.5, r.center().y), 3.5, if t.active { T.accent } else { T.text_dim });
                 left += DOT_W;
             }
-            let galley = elided(p, &t.name, close_r.left() - 4.0 - left);
+            let tag = t.imported.is_some().then(|| imported_tag(p));
+            let room = close_r.left() - 4.0 - left - tag.as_ref().map_or(0.0, |g| g.rect.width() + TAG_GAP);
+            let galley = elided(p, &t.name, room);
             let cut = galley.elided;
+            let after = left + galley.rect.width() + TAG_GAP;
             p.galley_with_override_text_color(pos2(left, r.center().y - galley.rect.height() * 0.5), galley, if t.active { T.text } else { T.text_dim });
+            if let Some(g) = tag {
+                p.galley(pos2(after, r.center().y - g.rect.height() * 0.5), g, T.text_dim);
+            }
             // The close button: an ×, brighter under the pointer.
             if close.hovered() {
                 p.rect_filled(close_r, T.rc(), T.hover);
@@ -781,9 +834,10 @@ pub fn bar(app: &mut App, ui: &mut egui::Ui) {
                 app.tabs.drag = Some(t.id);
                 acts.push(Act::Show(t.id));
             }
-            let place = match &t.path {
-                Some(path) => path.display().to_string(),
-                None => tr!("Not saved yet").to_string(),
+            let place = match (&t.path, &t.imported) {
+                (Some(path), _) => path.display().to_string(),
+                (None, Some(from)) => tr!("Imported from {path}. Saving makes a new AniCraft document; the original is never changed.", path = from.display().to_string()),
+                (None, None) => tr!("Not saved yet").to_string(),
             };
             let tip = if cut { format!("{}\n{place}", t.name) } else { place };
             close.on_hover_text(tr!("Close"));

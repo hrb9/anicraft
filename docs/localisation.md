@@ -112,8 +112,8 @@ on the console, and that string shows in English.
 
 ## Scripts and direction
 
-egui 0.36 lays text out glyph by glyph, without the Unicode bidirectional algorithm or
-shaping. So:
+egui 0.37 shapes text (with HarfRust) but has no Unicode bidirectional algorithm, and no one
+has checked yet that our faces draw the complex scripts correctly. So:
 
 | Script | Today |
 |---|---|
@@ -121,8 +121,8 @@ shaping. So:
 | Georgian | Offered when a catalog exists and the build embedded a valid Noto Sans Georgian from craft-fonts (via `CRAFT_FONTS_DIR` or the nearby checkout `build.rs` discovers); hidden only when it did not (`i18n::ready_codes`). |
 | Hebrew | Offered when a catalog exists and the build embedded a valid Noto Sans Hebrew from craft-fonts (`CRAFT_FONTS_DIR`), hidden when it did not (`i18n::ready_codes`). Strings stay logical in lookups and AccessKit and are visually ordered per line via `craft_text::bidi` (`i18n::display`, `theme::wrapped_label`); the legacy code `iw` normalizes to `he`, and `i18n::is_rtl_code` recognises RTL locales with script subtag priority. |
 | Chinese, Japanese, Korean | Draw correctly, but need a font the app doesn't bundle (a craft-fonts face), then a `READY` entry. |
-| Arabic, Persian, Urdu, Kurdish, Dhivehi | Not offered: right to left needs bidi and shaping in egui's text layout, and mirrored widgets. We follow upstream egui rather than fork it. |
-| Devanagari, Bengali, Tamil, Telugu, Thai, Lao | Not offered: they need shaping. |
+| Arabic, Persian, Urdu, Kurdish, Dhivehi | Not offered: right to left needs bidi in egui's text layout, and mirrored widgets. We follow upstream egui rather than fork it. |
+| Devanagari, Bengali, Tamil, Telugu, Thai, Lao | Not offered yet: they need a face for each script, a check that they draw correctly, and a `READY` entry. |
 | Vietnamese | Not offered yet: needs a check that every fallback face has its letters. |
 
 Catalogs for these are still embedded (as fallbacks) and pass through the parser, so turning a

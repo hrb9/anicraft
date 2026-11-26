@@ -311,21 +311,27 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--screenshot" => out.shot = Some(PathBuf::from(args.next().ok_or("--screenshot needs a file name")?)), // i18n-exempt: a console message
-            "--open" => out.open = args.next(),
+            // i18n-exempt: a console message
+            "--open" => out.open = Some(args.next().filter(|value| !value.starts_with('-')).ok_or("--open needs a panel name")?),
             // i18n-exempt: a console message
             "--control" => out.control = Some(anicraft_cli::control::parse_port(&args.next().unwrap_or_default()).map_err(|e| format!("--control: {e}"))?),
-            "--renderer" => out.renderer = args.next(),
+            // i18n-exempt: a console message
+            "--renderer" => out.renderer = Some(args.next().filter(|value| !value.starts_with('-')).ok_or("--renderer needs a renderer name")?),
             "--shot-width" => match args.next().and_then(|s| s.parse::<u32>().ok()) {
                 Some(w) if (64..=8192).contains(&w) => out.look.shot_width = Some(w),
                 _ => return Err("--shot-width takes a width in pixels, from 64 to 8192".into()), // i18n-exempt: a console message
             },
-            "--theme" => match args.next().as_deref() {
-                Some("graphite" | "dark") => out.look.theme = Some(theme::Palette::Graphite),
-                Some("light") => out.look.theme = Some(theme::Palette::Light),
-                Some("high-contrast") => out.look.theme = Some(theme::Palette::HighContrast),
-                Some(file) if file.to_ascii_lowercase().ends_with(".json") => out.look.theme_file = Some(PathBuf::from(file)),
-                other => return Err(format!("--theme takes dark (graphite), light, high-contrast or a theme file (.json), not {}", other.unwrap_or("nothing"))), // i18n-exempt: a console message
-            },
+            "--theme" => {
+                let (palette, file) = match args.next().as_deref() {
+                    Some("graphite" | "dark") => (Some(theme::Palette::Graphite), None),
+                    Some("light") => (Some(theme::Palette::Light), None),
+                    Some("high-contrast") => (Some(theme::Palette::HighContrast), None),
+                    Some(file) if file.to_ascii_lowercase().ends_with(".json") => (None, Some(PathBuf::from(file))),
+                    other => return Err(format!("--theme takes dark (graphite), light, high-contrast or a theme file (.json), not {}", other.unwrap_or("nothing"))), // i18n-exempt: a console message
+                };
+                out.look.theme = palette;
+                out.look.theme_file = file;
+            }
             "--scale" => match args.next().and_then(|s| s.trim_end_matches('%').parse::<f32>().ok()) {
                 Some(pct) if pct.is_finite() => out.look.scale = Some(pct / 100.0),
                 _ => return Err("--scale takes a percentage, such as 150".into()), // i18n-exempt: a console message
@@ -389,15 +395,25 @@ fn initialize_nightly_process_identity() -> Result<(), process_identity::Identit
     process_identity::initialize(build_flavor::COMPILED == build_flavor::BuildFlavor::NightlyV1, platform::APP_ID_NIGHTLY)
 }
 
-/// Says why the launch profile was refused, on the console and (nightly, with a desktop) in a
-/// dialog: a windowed build has no console to show it on.
+/// Whether a refusal may also open a native message box. Standard error always carries the reason;
+/// this only adds a box where one renders without the app's event loop. Never on macOS: rfd's alert
+/// there needs the AppKit run loop this start has not reached, so a refused nightly launch hung in
+/// an invisible modal instead of exiting (GridCraft Mac smoke, 2026-11-26).
+#[cfg(not(target_arch = "wasm32"))]
+fn refusal_dialog(flavor: build_flavor::BuildFlavor, desktop_session: bool, macos: bool) -> bool {
+    build_flavor::needs_native_error(flavor, desktop_session) && !macos
+}
+
+/// Says why the launch profile was refused, on the console and (nightly, with a desktop whose
+/// modal renders on its own: Windows, X11/Wayland) in a dialog: a windowed build has no console to
+/// show it on. macOS gets the console line only (`refusal_dialog`).
 #[cfg(not(target_arch = "wasm32"))]
 fn report_launch_profile_error(error: &str) {
     eprintln!("AniCraft launch profile: {error}");
     let desktop_session = cfg!(windows)
         || cfg!(target_os = "macos")
         || (cfg!(target_os = "linux") && ["DISPLAY", "WAYLAND_DISPLAY"].into_iter().any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty())));
-    if build_flavor::needs_native_error(build_flavor::COMPILED, desktop_session) {
+    if refusal_dialog(build_flavor::COMPILED, desktop_session, cfg!(target_os = "macos")) {
         if let Err(error) = initialize_nightly_process_identity() {
             eprintln!("AniCraft launch profile: {error}");
             return;
@@ -649,6 +665,27 @@ mod args_tests {
         parse_args(args.iter().map(|a| a.to_string())).unwrap_or_else(|e| panic!("{args:?}: {e}"))
     }
 
+    #[test]
+    fn last_theme_option_wins_across_builtin_and_file_themes() {
+        let file = "themes/Plum.JSON";
+        let look = parse(&["--theme", file, "--theme", "light"]).look;
+        assert_eq!((look.theme, look.theme_file), (Some(theme::Palette::Light), None));
+        let look = parse(&["--theme", "dark", "--theme", file]).look;
+        assert_eq!((look.theme, look.theme_file), (None, Some(PathBuf::from(file))));
+    }
+
+    #[test]
+    fn desktop_panel_and_renderer_options_require_values() {
+        for (flag, expected) in [("--open", "--open needs a panel name"), ("--renderer", "--renderer needs a renderer name")] {
+            for args in [&[flag][..], &[flag, "--help"], &[flag, "--version"]] {
+                assert_eq!(parse_args(args.iter().map(|arg| arg.to_string())).unwrap_err(), expected, "{args:?}");
+            }
+        }
+        let a = parse(&["--open", "testmovie", "--renderer", "wgpu", "walk.anicraft"]);
+        assert_eq!((a.open.as_deref(), a.renderer.as_deref()), (Some("testmovie"), Some("wgpu")));
+        assert_eq!(a.file, Some(PathBuf::from("walk.anicraft")));
+    }
+
     /// Windows (`"%1"`) and Linux (`%f`) hand a double-clicked document over as the one plain
     /// argument, spaces and all; it opens through `file.open`, as File › Open does.
     #[test]
@@ -739,3 +776,17 @@ mod ink;
 mod zoom_tests;
 #[cfg(test)]
 mod stage_budget_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod refusal_dialog_tests {
+    use super::refusal_dialog;
+    use crate::build_flavor::BuildFlavor;
+
+    #[test]
+    fn a_refusal_never_blocks_on_a_modal_before_the_event_loop_on_macos() {
+        assert!(refusal_dialog(BuildFlavor::NightlyV1, true, false), "a desktop refusal still shows the box where one renders");
+        assert!(!refusal_dialog(BuildFlavor::NightlyV1, true, true), "macOS has no run loop yet: the modal would hang");
+        assert!(!refusal_dialog(BuildFlavor::NightlyV1, false, false), "a headless session has no box");
+        assert!(!refusal_dialog(BuildFlavor::Stable, true, false), "only a nightly refusal explains itself in a box");
+    }
+}
